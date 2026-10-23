@@ -22,6 +22,10 @@ export function createSession(): string {
   return id;
 }
 
+export function sessionExists(sessionId: string): boolean {
+  return !!db.prepare('SELECT 1 FROM sessions WHERE id = ?').get(sessionId);
+}
+
 export function getMessages(sessionId: string): UIMessage[] {
   const row = db.prepare('SELECT messages FROM sessions WHERE id = ?').get(sessionId) as
     | { messages: string }

@@ -5,7 +5,7 @@ import { streamSSE } from 'hono/streaming';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { convertToModelMessages, type UIMessage } from 'ai';
 import { runAgent } from './agent.js';
-import { appendMessage, createSession, deleteSession, getMessages, listSessions } from './db.js';
+import { appendMessage, createSession, deleteSession, getMessages, listSessions, sessionExists } from './db.js';
 
 /**
  * 服务端 v2a：
@@ -27,6 +27,9 @@ app.post('/api/chat', async (c: Context) => {
   };
   if (!sessionId || !message?.trim()) {
     return c.json({ error: 'sessionId 和 message 必填' }, 400);
+  }
+  if (!sessionExists(sessionId)) {
+    return c.json({ error: '会话不存在' }, 404);
   }
 
   const userMsg: UIMessage = {
