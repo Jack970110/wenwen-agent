@@ -35,7 +35,7 @@ const SYSTEM_PROMPT = `你是"问问"，一位网文数据分析 Agent。你可�
  */
 export function runAgent(messages: ModelMessage[], abortSignal?: AbortSignal) {
   const result = streamText({
-    model: zhipu('glm-4.7-flash'),
+    model: zhipu('glm-4-flash'),
     system: SYSTEM_PROMPT,
     messages,
     abortSignal,
