@@ -107,7 +107,7 @@ app.post('/api/sessions', (c: Context) => c.json({ sessionId: createSession() })
 // 静态托管聊天页面（必须放在 API 路由之后）
 app.use('*', serveStatic({ root: './web' }));
 
-const port = Number(process.env.PORT) || 3000;
+const port = Number(process.env.PORT) || 3001;
 serve({ fetch: app.fetch, port }, (info) => {
   console.log(`✅ 问问 Agent 服务已启动: http://localhost:${info.port}`);
 });
