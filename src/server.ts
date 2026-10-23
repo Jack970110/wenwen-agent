@@ -50,6 +50,8 @@ app.post('/api/chat', async (c: Context) => {
     }
     history.push(m);
   }
+  // 防御：任何情况下发给模型的消息都不能为空
+  if (history.length === 0) history.push(userMsg);
 
   // 客户端断开（关页面/点停止）→ abortController 触发 → streamText 取消上游请求
   // 不取消的话模型会继续生成，token 照烧
@@ -99,9 +101,9 @@ app.post('/api/chat', async (c: Context) => {
       const msg = err instanceof Error ? err.message : String(err);
       const friendly = msg.includes('Insufficient Balance') || msg.includes('402')
         ? '模型账户余额不足，请充值后重试'
-        : msg.includes('429') || msg.toLowerCase().includes('rate')
-          ? '请求过于频繁（限流），稍等几秒再试'
-          : `请求失败: ${msg}`;
+        : msg.includes('访问量过大') || msg.includes('1305') || msg.includes('429') || msg.toLowerCase().includes('rate')
+          ? '免费模型当前限流（高峰期访问量大），请稍等几秒重试'
+          : `请求失败: ${msg.slice(0, 200)}`;
       // 失败同样落库占位，保持 user/assistant 交替
       appendMessage(sessionId, {
         id: crypto.randomUUID(),
