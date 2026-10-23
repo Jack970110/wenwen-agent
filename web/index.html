@@ -245,6 +245,8 @@ async function send() {
           addToolLine(evt.toolName, evt.error, true);
         } else if (evt.type === 'error') {
           content.textContent += '\n\n❌ ' + evt.message;
+        } else if (evt.type === 'done') {
+          content.classList.remove('streaming'); // 回答结束，移除光标
         }
       }
     }
@@ -257,6 +259,8 @@ async function send() {
     abortCtrl = null;
     sendBtn.style.display = 'block';
     stopBtn.style.display = 'none';
+    // 兜底：任何路径退出都清掉残留的流式光标
+    document.querySelectorAll('.content.streaming').forEach((el) => el.classList.remove('streaming'));
     if ($('#chatTitle').textContent === '新对话') {
       $('#chatTitle').textContent = text.slice(0, 20);
       loadSessions();
