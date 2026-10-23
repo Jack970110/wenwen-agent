@@ -1,0 +1,113 @@
+import 'dotenv/config';
+import { serve } from '@hono/node-server';
+import { Hono, type Context } from 'hono';
+import { streamSSE } from 'hono/streaming';
+import { serveStatic } from '@hono/node-server/serve-static';
+import { convertToModelMessages, type UIMessage } from 'ai';
+import { runAgent } from './agent.js';
+import { appendMessage, createSession, getMessages, listSessions } from './db.js';
+
+/**
+ * 服务端 v2a：
+ * - POST /api/chat    SSE 流式对话（核心接口）
+ * - GET  /api/sessions 会话列表
+ * - GET  /api/sessions/:id/messages 会话历史
+ * - 静态托管 web/ 目录
+ *
+ * 协议设计：SSE event 的 data 是一行 JSON，type 字段区分事件：
+ *   tool-call / tool-error / text-delta / done / error
+ * 前端据此分别渲染"工具调用时间线"和"正文流"。
+ */
+const app = new Hono();
+
+app.post('/api/chat', async (c: Context) => {
+  const { sessionId, message } = (await c.req.json()) as {
+    sessionId: string;
+    message: string;
+  };
+  if (!sessionId || !message?.trim()) {
+    return c.json({ error: 'sessionId 和 message 必填' }, 400);
+  }
+
+  const userMsg: UIMessage = {
+    id: crypto.randomUUID(),
+    role: 'user',
+    parts: [{ type: 'text', text: message.trim() }],
+  };
+  appendMessage(sessionId, userMsg);
+  const history = getMessages(sessionId);
+
+  // 客户端断开（关页面/点停止）→ abortController 触发 → streamText 取消上游请求
+  // 不取消的话模型会继续生成，token 照烧
+  const abortController = new AbortController();
+  c.req.raw.signal.addEventListener('abort', () => abortController.abort());
+
+  return streamSSE(c, async (stream) => {
+    let assistantText = '';
+    let errored = false;
+    try {
+      const result = runAgent(await convertToModelMessages(history), abortController.signal);
+
+      for await (const part of result.fullStream) {
+        if (part.type === 'tool-call') {
+          await stream.writeSSE({
+            data: JSON.stringify({ type: 'tool-call', toolName: part.toolName, args: part.input }),
+          });
+        } else if (part.type === 'tool-error') {
+          await stream.writeSSE({
+            data: JSON.stringify({ type: 'tool-error', toolName: part.toolName, error: String(part.error) }),
+          });
+        } else if (part.type === 'text-delta') {
+          assistantText += part.text;
+          await stream.writeSSE({ data: JSON.stringify({ type: 'text-delta', text: part.text }) });
+        }
+      }
+
+      appendMessage(sessionId, {
+        id: crypto.randomUUID(),
+        role: 'assistant',
+        parts: [{ type: 'text', text: assistantText }],
+      });
+      await stream.writeSSE({ data: JSON.stringify({ type: 'done' }) });
+    } catch (err) {
+      // 客户端主动断开不算错误，静默结束即可
+      if (abortController.signal.aborted) {
+        if (assistantText) {
+          appendMessage(sessionId, {
+            id: crypto.randomUUID(),
+            role: 'assistant',
+            parts: [{ type: 'text', text: assistantText + '\n\n（已停止生成）' }],
+          });
+        }
+        await stream.writeSSE({ data: JSON.stringify({ type: 'done', stopped: true }) });
+        return;
+      }
+      errored = true;
+      const msg = err instanceof Error ? err.message : String(err);
+      const friendly = msg.includes('Insufficient Balance') || msg.includes('402')
+        ? '模型账户余额不足，请充值后重试'
+        : msg.includes('429') || msg.toLowerCase().includes('rate')
+          ? '请求过于频繁（限流），稍等几秒再试'
+          : `请求失败: ${msg}`;
+      await stream.writeSSE({ data: JSON.stringify({ type: 'error', message: friendly }) });
+    } finally {
+      void errored;
+    }
+  });
+});
+
+app.get('/api/sessions', (c: Context) => c.json(listSessions()));
+
+app.get('/api/sessions/:id/messages', (c: Context) =>
+  c.json(getMessages(c.req.param('id') as string)),
+);
+
+app.post('/api/sessions', (c: Context) => c.json({ sessionId: createSession() }));
+
+// 静态托管聊天页面（必须放在 API 路由之后）
+app.use('*', serveStatic({ root: './web' }));
+
+const port = Number(process.env.PORT) || 3000;
+serve({ fetch: app.fetch, port }, (info) => {
+  console.log(`✅ 问问 Agent 服务已启动: http://localhost:${info.port}`);
+});

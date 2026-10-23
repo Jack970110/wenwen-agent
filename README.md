@@ -9,6 +9,11 @@
 ```bash
 npm install
 cp .env.example .env   # 填入 ZHIPU_API_KEY（open.bigmodel.cn 注册获取，免费）
+
+# 方式一：Web 界面（推荐）
+npm run server         # 打开 http://localhost:3000
+
+# 方式二：CLI
 npm run dev
 ```
 
@@ -21,9 +26,12 @@ npm run dev
 ## 结构（学习重点）
 
 - `src/tools.ts` — 工具定义（Function Calling 的核心：zod 约束参数 + execute 执行）
-- `src/agent.ts` — Agent loop（streamText + stopWhen 多步循环护栏）
-- `src/index.ts` — CLI 交互 + 流式输出 + 工具调用过程打印（可观测性）
-- `src/mockData.ts` — mock 数据层，v2 可换成真实数据库，工具层不变
+- `src/agent.ts` — Agent loop（streamText + stopWhen 多步循环护栏 + abortSignal 取消）
+- `src/server.ts` — Hono 服务：SSE 流式接口、事件协议（tool-call / text-delta / done / error）、断连时 abort 上游模型请求
+- `src/db.ts` — 会话持久化（Node 22 内置 node:sqlite，零依赖）
+- `web/index.html` — 聊天界面：流式渲染、工具调用时间线、停止生成（fetch 手动解析 SSE，支持 POST 推流）
+- `src/index.ts` — CLI 版交互入口
+- `src/mockData.ts` — mock 数据层，可换成真实数据库，工具层不变
 
 ## Roadmap
 
@@ -36,11 +44,11 @@ npm run dev
 
 ### v2 —— 服务化 + MCP
 
-**v2a：服务端拆分 + Web UI**
-- [ ] agent loop 挪进 Node 服务（Hono），暴露 SSE 流式接口 `POST /api/chat`
-- [ ] Web 前端：对话 UI、流式渲染（打字机）、工具调用过程可视化
-- [ ] 会话历史持久化（内存 → SQLite），支持多会话
-- [ ] 前端"停止生成"按钮 → 服务端 abortController 取消上游请求
+**v2a：服务端拆分 + Web UI** ✅
+- [x] agent loop 挪进 Node 服务（Hono），暴露 SSE 流式接口 `POST /api/chat`
+- [x] Web 前端：对话 UI、流式渲染（打字机）、工具调用过程可视化
+- [x] 会话历史持久化（SQLite，node:sqlite 内置零依赖），支持多会话与历史回看
+- [x] 前端"停止生成"→ 断开连接 → 服务端感知 abort 取消上游请求
 
 **v2b：MCP Server**
 - [ ] 将 3 个工具封装为 MCP Server（STDIO + HTTP 两种 transport）
