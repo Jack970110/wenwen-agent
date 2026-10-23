@@ -1,14 +1,16 @@
 import { tool } from 'ai';
 import { z } from 'zod';
-import { chapterStats } from './mockData.js';
+import { queryChaptersData, analyzeTrendData, saveReportData } from './dataService.js';
 
 /**
  * 工具（Function Calling）是 Agent 的"手"：
- * 模型自己不会查数据，它只能决定"调用哪个工具、传什么参数"，
- * 真正的执行在你写的 execute 函数里——这就是"模型编排 + 代码执行"的核心分工。
+ * 模型只决定"调用哪个工具、传什么参数"，真正的执行在你写的 execute 函数里。
  *
- * inputSchema 用 zod 定义参数：AI SDK 会把它转成 JSON Schema 给模型看，
- * 模型据此生成符合约束的参数，运行时 SDK 也会校验，不合法就不会执行。
+ * inputSchema 用 zod 定义参数：AI SDK 转成 JSON Schema 给模型看，
+ * 运行时也会校验，不合法就不会执行。
+ *
+ * v2b 起：执行逻辑收敛到 dataService.js，本文件只保留协议适配层
+ * （AI SDK 的 tool 包装）。同一份逻辑同时暴露给 MCP Server。
  */
 
 /** 工具 1：查询章节数据 */
@@ -18,10 +20,8 @@ export const queryChapters = tool({
     fromChapterId: z.number().int().describe('起始章节 id（含）'),
     toChapterId: z.number().int().optional().describe('结束章节 id（含），不传则只查起始那一章'),
   }),
-  execute: async ({ fromChapterId, toChapterId }) => {
-    const to = toChapterId ?? fromChapterId;
-    return chapterStats.filter((c) => c.chapterId >= fromChapterId && c.chapterId <= to);
-  },
+  execute: async ({ fromChapterId, toChapterId }) =>
+    queryChaptersData(fromChapterId, toChapterId),
 });
 
 /** 工具 2：趋势分析（纯计算，展示"工具可以是确定性代码"） */
@@ -31,23 +31,8 @@ export const analyzeTrend = tool({
     fromChapterId: z.number().int().describe('起始章节 id（含）'),
     toChapterId: z.number().int().describe('结束章节 id（含）'),
   }),
-  execute: async ({ fromChapterId, toChapterId }) => {
-    const list = chapterStats.filter((c) => c.chapterId >= fromChapterId && c.chapterId <= toChapterId);
-    if (list.length === 0) return { error: '区间内无数据' };
-
-    const byFinish = [...list].sort((a, b) => a.finishRate7d - b.finishRate7d);
-    const dropFollow = list.filter((c) => c.netFollow7d < 0);
-    const first = list[0];
-    const last = list[list.length - 1];
-    const readerTrend = ((last.readers7d - first.readers7d) / first.readers7d) * 100;
-
-    return {
-      lowestFinishRate: { chapter: byFinish[0].title, rate: byFinish[0].finishRate7d },
-      highestFinishRate: { chapter: byFinish[byFinish.length - 1].title, rate: byFinish[byFinish.length - 1].finishRate7d },
-      chaptersLosingFollowers: dropFollow.map((c) => ({ chapter: c.title, netFollow7d: c.netFollow7d })),
-      readerChangePercent: Number(readerTrend.toFixed(1)),
-    };
-  },
+  execute: async ({ fromChapterId, toChapterId }) =>
+    analyzeTrendData(fromChapterId, toChapterId),
 });
 
 /** 工具 3：生成结构化报告（把分析结果落成 JSON 报告，模拟"交付物"） */
@@ -58,12 +43,8 @@ export const generateReport = tool({
     conclusions: z.array(z.string()).describe('结论列表，每条一句话'),
     suggestions: z.array(z.string()).describe('改进建议列表，每条一句话'),
   }),
-  execute: async ({ title, conclusions, suggestions }) => {
-    const reportId = `RPT-${Date.now().toString(36).toUpperCase()}`;
-    // v2 这里可以写入数据库 / 生成文件
-    console.log(`\n📄 报告已生成 [${reportId}]: ${title}`);
-    return { reportId, saved: true };
-  },
+  execute: async ({ title, conclusions, suggestions }) =>
+    saveReportData(title, conclusions, suggestions),
 });
 
 export const allTools = { queryChapters, analyzeTrend, generateReport };
