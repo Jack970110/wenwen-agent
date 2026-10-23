@@ -6,6 +6,9 @@
   "scripts": {
     "dev": "tsx src/index.ts",
     "server": "tsx src/server.ts",
+    "mcp:http": "tsx src/mcp-http-server.ts",
+    "test:mcp": "tsx src/test-mcp.ts",
+    "test:mcp:http": "tsx src/test-mcp-http.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
