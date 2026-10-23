@@ -35,7 +35,18 @@ app.post('/api/chat', async (c: Context) => {
     parts: [{ type: 'text', text: message.trim() }],
   };
   appendMessage(sessionId, userMsg);
-  const history = getMessages(sessionId);
+  const rawHistory = getMessages(sessionId);
+
+  // 历史卫生：正常序列必须 user/assistant 交替。
+  // 回答被停止或失败时会留下"悬空提问"（连续两条 user），小模型会被带偏。
+  // 策略：只保留最后一条悬空提问（即本轮），丢弃更早的。
+  const history: UIMessage[] = [];
+  for (const m of rawHistory) {
+    if (m.role === 'user' && history[history.length - 1]?.role === 'user') {
+      history.pop();
+    }
+    history.push(m);
+  }
 
   // 客户端断开（关页面/点停止）→ abortController 触发 → streamText 取消上游请求
   // 不取消的话模型会继续生成，token 照烧
@@ -72,13 +83,12 @@ app.post('/api/chat', async (c: Context) => {
     } catch (err) {
       // 客户端主动断开不算错误，静默结束即可
       if (abortController.signal.aborted) {
-        if (assistantText) {
-          appendMessage(sessionId, {
-            id: crypto.randomUUID(),
-            role: 'assistant',
-            parts: [{ type: 'text', text: assistantText + '\n\n（已停止生成）' }],
-          });
-        }
+        // 即使没有生成任何文字也要落库占位，否则历史里会留下悬空提问污染后续对话
+        appendMessage(sessionId, {
+          id: crypto.randomUUID(),
+          role: 'assistant',
+          parts: [{ type: 'text', text: (assistantText || '（已停止生成）') + '' }],
+        });
         await stream.writeSSE({ data: JSON.stringify({ type: 'done', stopped: true }) });
         return;
       }
@@ -89,6 +99,12 @@ app.post('/api/chat', async (c: Context) => {
         : msg.includes('429') || msg.toLowerCase().includes('rate')
           ? '请求过于频繁（限流），稍等几秒再试'
           : `请求失败: ${msg}`;
+      // 失败同样落库占位，保持 user/assistant 交替
+      appendMessage(sessionId, {
+        id: crypto.randomUUID(),
+        role: 'assistant',
+        parts: [{ type: 'text', text: `（生成失败：${friendly}）` }],
+      });
       await stream.writeSSE({ data: JSON.stringify({ type: 'error', message: friendly }) });
     } finally {
       void errored;
