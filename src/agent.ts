@@ -39,6 +39,7 @@ export function runAgent(messages: ModelMessage[], abortSignal?: AbortSignal) {
     system: SYSTEM_PROMPT,
     messages,
     abortSignal,
+    maxRetries: 5, // 免费模型高峰期限流（429），多给几次退避重试的机会
     tools: allTools,
     stopWhen: stepCountIs(8),
   });
