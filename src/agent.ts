@@ -33,11 +33,12 @@ const SYSTEM_PROMPT = `你是"问问"，一位网文数据分析 Agent。你可�
  * - 模型输出工具调用 → SDK 执行 execute → 把结果喂回模型 → 模型继续思考
  * - stopWhen 限制最多 8 步，防止模型无限循环调用工具（生产必配的护栏）
  */
-export function runAgent(messages: ModelMessage[]) {
+export function runAgent(messages: ModelMessage[], abortSignal?: AbortSignal) {
   const result = streamText({
     model: zhipu('glm-4-flash'),
     system: SYSTEM_PROMPT,
     messages,
+    abortSignal,
     tools: allTools,
     stopWhen: stepCountIs(8),
   });
