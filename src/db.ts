@@ -52,3 +52,8 @@ export function listSessions(): { id: string; title: string; createdAt: string }
     .prepare('SELECT id, title, created_at as createdAt FROM sessions ORDER BY created_at DESC LIMIT 50')
     .all() as { id: string; title: string; createdAt: string }[];
 }
+
+export function deleteSession(sessionId: string): boolean {
+  const result = db.prepare('DELETE FROM sessions WHERE id = ?').run(sessionId);
+  return result.changes > 0;
+}
