@@ -26,6 +26,10 @@ npm run dev
 ## 结构（学习重点）
 
 - `src/tools.ts` — 工具定义（Function Calling 的核心：zod 约束参数 + execute 执行）
+- `src/dataService.ts` — 数据服务层：业务逻辑与协议解耦，Function Calling 和 MCP 共用
+- `src/mcp-server.ts` — MCP Server（stdio 传输）：同一份工具能力通过标准协议暴露给任何宿主
+- `src/test-mcp.ts` — MCP 测试客户端：模拟宿主做握手/列工具/调工具的全流程验证
+- `.mcp.json` — 宿主接入配置（CodeBuddy / Cursor 通用）
 - `src/agent.ts` — Agent loop（streamText + stopWhen 多步循环护栏 + abortSignal 取消）
 - `src/server.ts` — Hono 服务：SSE 流式接口、事件协议（tool-call / text-delta / done / error）、断连时 abort 上游模型请求
 - `src/db.ts` — 会话持久化（Node 22 内置 node:sqlite，零依赖）
@@ -50,10 +54,12 @@ npm run dev
 - [x] 会话历史持久化（SQLite，node:sqlite 内置零依赖），支持多会话与历史回看
 - [x] 前端"停止生成"→ 断开连接 → 服务端感知 abort 取消上游请求
 
-**v2b：MCP Server**
-- [ ] 将 3 个工具封装为 MCP Server（STDIO + HTTP 两种 transport）
-- [ ] 接入 CodeBuddy / Cursor 实际调用验证
-- [ ] 产出对比：同一工具的 Function Calling 版 vs MCP 版的差异
+**v2b：MCP Server** ✅
+- [x] 工具逻辑抽为 dataService 层（业务与协议解耦，FC/MCP 共用）
+- [x] MCP Server（stdio 传输）：queryChapters / analyzeTrend / generateReport 三个工具
+- [x] 测试客户端验证完整协议流程（握手 → listTools → callTool）
+- [x] `.mcp.json` 宿主接入配置（CodeBuddy / Cursor 可直接启用）
+- [ ] HTTP 传输（远程接入，作为进阶练习）
 
 ### v3 —— RAG + 上线要素
 

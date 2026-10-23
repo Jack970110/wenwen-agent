@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "wenwen-data": {
+      "command": "/Users/wangjianping/work/my/wenwen-agent/node_modules/.bin/tsx",
+      "args": ["/Users/wangjianping/work/my/wenwen-agent/src/mcp-server.ts"]
+    }
+  }
+}
