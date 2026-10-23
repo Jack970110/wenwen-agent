@@ -1,0 +1,46 @@
+import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
+import { streamText, stepCountIs, type ModelMessage } from 'ai';
+import { allTools } from './tools.js';
+
+/**
+ * 智谱开放平台的接口兼容 OpenAI 格式，所以用 openai-compatible provider。
+ * 知识点：国内主流模型平台（智谱/DeepSeek/千问/硅基流动）都兼容 OpenAI 协议，
+ * 换模型 = 换 baseURL + apiKey + 模型名，业务代码零改动——这就是协议统一的value。
+ */
+const zhipu = createOpenAICompatible({
+  name: 'zhipu',
+  baseURL: 'https://open.bigmodel.cn/api/paas/v4',
+  apiKey: process.env.ZHIPU_API_KEY,
+});
+
+/**
+ * Agent 的"大脑"：系统提示词决定它扮演什么角色、按什么流程工作。
+ */
+const SYSTEM_PROMPT = `你是"问问"，一位网文数据分析 Agent。你可以查询章节阅读数据、做趋势分析、生成数据报告。
+
+工作流程：
+1. 先用 queryChapters 了解数据概况，需要结论时用 analyzeTrend 做分析
+2. 分析完成后，必须调用 generateReport 保存结构化结论
+3. 最后用一段简短自然的中文回复用户：给出关键结论和建议
+
+注意：
+- 数据里没有的信息不要编造，可以如实说查不到
+- 回复简洁，重点突出`;
+
+/**
+ * Agent Loop 的核心就是这一行 streamText：
+ * - 模型输出文本 → 直接流式给用户
+ * - 模型输出工具调用 → SDK 执行 execute → 把结果喂回模型 → 模型继续思考
+ * - stopWhen 限制最多 8 步，防止模型无限循环调用工具（生产必配的护栏）
+ */
+export function runAgent(messages: ModelMessage[]) {
+  const result = streamText({
+    model: zhipu('glm-4-flash'),
+    system: SYSTEM_PROMPT,
+    messages,
+    tools: allTools,
+    stopWhen: stepCountIs(8),
+  });
+
+  return result;
+}
