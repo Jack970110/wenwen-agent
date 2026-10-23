@@ -180,6 +180,7 @@ async function openSession(id) {
   const msgs = await (await fetch(`/api/sessions/${id}/messages`)).json();
   $('#chatTitle').textContent = $('.session-item[data-id="' + id + '"]')?.textContent || '对话';
   chatEl.innerHTML = '';
+  // 历史消息都是已完成的回答，不加光标
   for (const m of msgs) addMessage(m.role, m.parts.find(p => p.type === 'text')?.text || '');
   scrollBottom();
   loadSessions();
@@ -189,13 +190,13 @@ async function openSession(id) {
 function emptyHint() { chatEl.querySelector('.empty')?.remove(); }
 function scrollBottom() { chatEl.scrollTop = chatEl.scrollHeight; }
 
-function addMessage(role, text) {
+function addMessage(role, text, streaming = false) {
   emptyHint();
   const div = document.createElement('div');
   div.className = 'msg ' + role;
   div.innerHTML = `
     <div class="avatar">${role === 'user' ? '我' : '问'}</div>
-    <div class="bubble"><div class="content ${role === 'assistant' ? 'streaming' : ''}"></div></div>`;
+    <div class="bubble"><div class="content ${streaming ? 'streaming' : ''}"></div></div>`;
   div.querySelector('.content').textContent = text;
   chatEl.appendChild(div);
   scrollBottom();
@@ -220,11 +221,11 @@ async function send() {
   sendBtn.style.display = 'none';
   stopBtn.style.display = 'block';
   addMessage('user', text);
+  const content = addMessage('assistant', '', true); // 仅本次回答带流式光标
 
   // 用户点停止 → 中断 fetch → 服务端感知断开 → abort 上游模型请求
   abortCtrl = new AbortController();
 
-  const content = addMessage('assistant', '');
   try {
     const res = await fetch('/api/chat', {
       method: 'POST',
