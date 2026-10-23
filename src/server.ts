@@ -5,7 +5,7 @@ import { streamSSE } from 'hono/streaming';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { convertToModelMessages, type UIMessage } from 'ai';
 import { runAgent } from './agent.js';
-import { appendMessage, createSession, getMessages, listSessions } from './db.js';
+import { appendMessage, createSession, deleteSession, getMessages, listSessions } from './db.js';
 
 /**
  * 服务端 v2a：
@@ -103,6 +103,10 @@ app.get('/api/sessions/:id/messages', (c: Context) =>
 );
 
 app.post('/api/sessions', (c: Context) => c.json({ sessionId: createSession() }));
+
+app.delete('/api/sessions/:id', (c: Context) =>
+  c.json({ ok: deleteSession(c.req.param('id') as string) }),
+);
 
 // 静态托管聊天页面（必须放在 API 路由之后）
 app.use('*', serveStatic({ root: './web' }));

@@ -35,9 +35,18 @@
   .session-item {
     padding: 8px 10px; border-radius: 7px; cursor: pointer; color: var(--dim);
     font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    display: flex; align-items: center; justify-content: space-between; gap: 6px;
   }
   .session-item:hover { background: var(--panel2); }
   .session-item.active { background: var(--panel2); color: var(--text); }
+  .session-item .title { overflow: hidden; text-overflow: ellipsis; }
+  .session-item .del {
+    flex-shrink: 0; width: 20px; height: 20px; border: none; border-radius: 5px;
+    background: transparent; color: var(--dim); cursor: pointer; font-size: 13px;
+    display: none; align-items: center; justify-content: center; line-height: 1;
+  }
+  .session-item:hover .del { display: flex; }
+  .session-item .del:hover { color: var(--err); background: rgba(248, 113, 113, .12); }
   /* ---------- 主区 ---------- */
   main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
   header {
@@ -150,7 +159,10 @@ let sessionId = null, busy = false, abortCtrl = null;
 async function loadSessions() {
   const list = await (await fetch('/api/sessions')).json();
   $('#sessionList').innerHTML = list.map(s =>
-    `<div class="session-item ${s.id === sessionId ? 'active' : ''}" data-id="${s.id}">${s.title}</div>`
+    `<div class="session-item ${s.id === sessionId ? 'active' : ''}" data-id="${s.id}">
+      <span class="title">${s.title}</span>
+      <button class="del" data-id="${s.id}" title="删除对话">✕</button>
+    </div>`
   ).join('');
 }
 
@@ -278,7 +290,17 @@ inputEl.addEventListener('input', () => {
   inputEl.style.height = 'auto';
   inputEl.style.height = Math.min(inputEl.scrollHeight, 120) + 'px';
 });
-$('#sessionList').onclick = (e) => {
+$('#sessionList').onclick = async (e) => {
+  // 删除按钮（阻止冒泡，不触发会话切换）
+  if (e.target.matches('.del')) {
+    e.stopPropagation();
+    const id = e.target.dataset.id;
+    if (!confirm('确定删除这个对话吗？')) return;
+    await fetch(`/api/sessions/${id}`, { method: 'DELETE' });
+    if (id === sessionId) newChat();
+    else loadSessions();
+    return;
+  }
   const item = e.target.closest('.session-item');
   if (item && !busy) openSession(item.dataset.id);
 };
