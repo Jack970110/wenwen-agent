@@ -11,10 +11,16 @@ npm install
 cp .env.example .env   # 填入 ZHIPU_API_KEY（open.bigmodel.cn 注册获取，免费）
 
 # 方式一：Web 界面（推荐）
-npm run server         # 打开 http://localhost:3000
+npm run server         # 打开 http://localhost:3001
 
 # 方式二：CLI
 npm run dev
+
+# 方式三：MCP Server（供 CodeBuddy/Cursor/WorkBuddy 等宿主接入）
+# stdio：宿主读取 .mcp.json 自动拉起，无需手动启动
+npm run mcp:http       # HTTP 传输，监听 http://localhost:3002/mcp
+npm run test:mcp       # 验证 stdio 全流程
+npm run test:mcp:http  # 验证 HTTP 全流程
 ```
 
 ## 试试这些问题
@@ -27,8 +33,10 @@ npm run dev
 
 - `src/tools.ts` — 工具定义（Function Calling 的核心：zod 约束参数 + execute 执行）
 - `src/dataService.ts` — 数据服务层：业务逻辑与协议解耦，Function Calling 和 MCP 共用
-- `src/mcp-server.ts` — MCP Server（stdio 传输）：同一份工具能力通过标准协议暴露给任何宿主
-- `src/test-mcp.ts` — MCP 测试客户端：模拟宿主做握手/列工具/调工具的全流程验证
+- `src/mcp-register.ts` — MCP 工具注册（stdio/HTTP 两种传输共享）
+- `src/mcp-server.ts` — MCP Server（stdio 传输）：宿主拉起的本地子进程
+- `src/mcp-http-server.ts` — MCP Server（HTTP 传输）：常驻服务，远程宿主可接入
+- `src/test-mcp.ts` / `src/test-mcp-http.ts` — 两种传输的测试客户端（握手/列工具/调工具全流程）
 - `.mcp.json` — 宿主接入配置（CodeBuddy / Cursor 通用）
 - `src/agent.ts` — Agent loop（streamText + stopWhen 多步循环护栏 + abortSignal 取消）
 - `src/server.ts` — Hono 服务：SSE 流式接口、事件协议（tool-call / text-delta / done / error）、断连时 abort 上游模型请求
@@ -59,7 +67,7 @@ npm run dev
 - [x] MCP Server（stdio 传输）：queryChapters / analyzeTrend / generateReport 三个工具
 - [x] 测试客户端验证完整协议流程（握手 → listTools → callTool）
 - [x] `.mcp.json` 宿主接入配置（CodeBuddy / Cursor 可直接启用）
-- [ ] HTTP 传输（远程接入，作为进阶练习）
+- [x] HTTP 传输（`npm run mcp:http`，端口 3002，无状态模式，每请求新建实例）
 
 ### v3 —— RAG + 上线要素
 
