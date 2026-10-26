@@ -65,6 +65,10 @@ export function useChatStream(sessionId: Ref<string>) {
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buf = '';
+      // 诊断：观察 delta 在浏览器端的到达节奏（控制台每 50 条打一条）
+      const streamStart = performance.now();
+      let firstDeltaAt = 0;
+      let deltaCount = 0;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -77,8 +81,14 @@ export function useChatStream(sessionId: Ref<string>) {
           if (!line.startsWith('data:')) continue;
           const evt: ChatEvent = JSON.parse(line.slice(5));
           if (evt.type === 'text-delta') {
+            if (!firstDeltaAt) { firstDeltaAt = performance.now(); console.log(`[stream] 首个 text-delta 到达于请求后 ${(firstDeltaAt - streamStart).toFixed(0)}ms`); }
+            deltaCount++;
+            if (deltaCount % 50 === 0) console.log(`[stream] 已收到 ${deltaCount} 个 delta @ ${(performance.now() - streamStart).toFixed(0)}ms`);
             assistant.text += evt.text!;
           } else if (evt.type === 'reasoning-delta') {
+            if (!firstDeltaAt) { firstDeltaAt = performance.now(); console.log(`[stream] 首个 reasoning-delta 到达于请求后 ${(firstDeltaAt - streamStart).toFixed(0)}ms`); }
+            deltaCount++;
+            if (deltaCount % 50 === 0) console.log(`[stream] 已收到 ${deltaCount} 个 delta @ ${(performance.now() - streamStart).toFixed(0)}ms`);
             assistant.reasoning += evt.text!;
           } else if (evt.type === 'status') {
             status.value = evt.message!;
@@ -92,6 +102,7 @@ export function useChatStream(sessionId: Ref<string>) {
         }
       }
       onDone?.();
+      if (deltaCount) console.log(`[stream] 结束：共 ${deltaCount} 个 delta，总耗时 ${(performance.now() - streamStart).toFixed(0)}ms（若逐条到达，上面应每隔 ~300ms 打一条）`);
     } catch (e: any) {
       if (e.name !== 'AbortError') errorMsg.value = e.message || '连接中断';
     } finally {
