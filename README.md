@@ -77,7 +77,8 @@ npm run test:mcp:http  # 验证 HTTP 全流程
 - [x] 向量存储：SQLite + 暴力余弦检索（块数上万再迁 pgvector）
 - [x] `searchNovel` 工具接入 Agent，回答标注章节出处
 - [x] RAG 质量调优：动态注入书单修触发、反幻觉规则、提炼式回答
-- [ ] bge-reranker 精排（二期）
+- [x] 检索评测集 + 命中率跑分（`npm run eval`）：命中率@3 = 100%，@1 = 58%
+- [ ] bge-reranker 精排（二期，目标：@1 从 58% 提升）
 
 **v3b：上线要素（生产化改造）**
 - [ ] 鉴权：登录 + JWT
