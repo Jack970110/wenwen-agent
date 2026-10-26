@@ -1,6 +1,8 @@
 import { tool } from 'ai';
 import { z } from 'zod';
 import { queryChaptersData, analyzeTrendData, saveReportData } from './dataService.js';
+import { embed } from './rag/embed.js';
+import { searchNovelChunks } from './rag/store.js';
 
 /**
  * 工具（Function Calling）是 Agent 的"手"：
@@ -47,4 +49,20 @@ export const generateReport = tool({
     saveReportData(title, conclusions, suggestions),
 });
 
-export const allTools = { queryChapters, analyzeTrend, generateReport };
+/** 工具 4：小说语义检索（RAG）——回答基于检索到的原文片段 */
+export const searchNovel = tool({
+  description: '在已入库的小说中做语义检索，返回与问题最相关的原文片段（含章节出处）。回答小说相关问题时必须先调用此工具获取原文依据。',
+  inputSchema: z.object({
+    query: z.string().describe('检索问题，如"主角在哪里发现了日记"'),
+    topK: z.number().int().min(1).max(10).optional().describe('返回片段数，默认 5'),
+  }),
+  execute: async ({ query, topK }) => {
+    const [vector] = await embed([query]);
+    const results = searchNovelChunks(vector, topK ?? 5);
+    return results.length
+      ? results
+      : { message: '未检索到相关内容，可能还没有小说入库' };
+  },
+});
+
+export const allTools = { queryChapters, analyzeTrend, generateReport, searchNovel };
