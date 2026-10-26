@@ -51,7 +51,7 @@ export const generateReport = tool({
 
 /** 工具 4：小说语义检索（RAG）——回答基于检索到的原文片段 */
 export const searchNovel = tool({
-  description: '在已入库的小说中做语义检索，返回与问题最相关的原文片段（含章节出处）。回答小说相关问题时必须先调用此工具获取原文依据。',
+  description: '在已入库的小说中做语义检索，返回与问题最相关的原文片段（含章节出处）。用户问题涉及人物、地点、物品、情节等内容时必须先调用此工具。',
   inputSchema: z.object({
     query: z.string().describe('检索问题，如"主角在哪里发现了日记"'),
     topK: z.number().int().min(1).max(10).optional().describe('返回片段数，默认 5'),

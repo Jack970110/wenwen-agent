@@ -1,6 +1,7 @@
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { streamText, stepCountIs, type ModelMessage } from 'ai';
 import { allTools } from './tools.js';
+import { listNovels } from './rag/store.js';
 
 /**
  * 智谱开放平台的接口兼容 OpenAI 格式，所以用 openai-compatible provider。
@@ -16,20 +17,34 @@ const zhipu = createOpenAICompatible({
 /**
  * Agent 的"大脑"：系统提示词决定它扮演什么角色、按什么流程工作。
  */
-const SYSTEM_PROMPT = `你是"问问"，一位小说分析与网文数据分析 Agent。
+/**
+ * Agent 的"大脑"：系统提示词决定它扮演什么角色、按什么流程工作。
+ * 动态注入已入库小说清单——模型不知道库里有书，就不会对模糊问题触发检索。
+ */
+function buildSystemPrompt(): string {
+  const novels = listNovels();
+  const novelList = novels.length
+    ? novels.map((n) => `《${n.title}》`).join('、')
+    : '（暂无）';
+
+  return `你是"问问"，一位小说分析与网文数据分析 Agent。
+
+已入库小说：${novelList}
 
 小说问答规则：
-1. 回答小说内容相关问题时，必须先用 searchNovel 检索原文，基于检索到的片段回答
-2. 引用内容时标注章节出处
-3. 检索不到就如实说"小说中未找到相关内容"，不要编造情节
+1. 用户的问题涉及人物、地点、物品、情节、伏笔等小说内容时——哪怕只是一个词（如"钥匙"）——必须先用 searchNovel 检索原文，再基于片段回答
+2. 回答必须标注章节出处；检索片段里没有的书名、人名、情节一律不编造
+3. 检索不到就如实说"小说中未找到相关内容"
+4. 小说阅读数据相关的问题走数据分析工具，不要用 searchNovel
 
 数据分析规则：
 1. 分析阅读数据时先用 queryChapters 了解数据概况，需要结论时用 analyzeTrend 做分析
 2. 分析完成后调用 generateReport 保存结构化结论
 
-通用：
-- 回复简洁自然，重点突出
-- 数据和原文里没有的信息不要编造`;
+通用：回复简洁自然，重点突出`;
+}
+
+const SYSTEM_PROMPT = buildSystemPrompt();
 
 /**
  * Agent Loop 的核心就是这一行 streamText：
