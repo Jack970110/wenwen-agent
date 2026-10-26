@@ -35,9 +35,14 @@ async function loadHistory() {
   chat.errorMsg.value = '';
 }
 
-// 初始化
+// 初始化：优先恢复最近一条对话（Pinia 状态不持久化，刷新会丢 currentId；
+// 无脑 create 会导致每次刷新都多一条空对话），没有任何对话才新建
 store.refresh().then(async () => {
-  if (!store.currentId) await store.create();
+  if (store.list.length) {
+    await store.open(store.list[0].id); // 列表按时间倒序，[0] 是最近的
+  } else {
+    await store.create();
+  }
   sessionId.value = store.currentId;
 });
 watch(() => store.currentId, (id) => {
