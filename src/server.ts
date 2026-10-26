@@ -7,8 +7,8 @@ import { convertToModelMessages, type UIMessage } from 'ai';
 import { runAgent } from './agent.js';
 import { appendMessage, createSession, deleteSession, getMessages, listSessions, sessionExists } from './db.js';
 import { chunkNovel } from './rag/chunker.js';
-import { embed } from './rag/embed.js';
-import { createNovel, deleteNovel, insertChunks, listNovels } from './rag/store.js';
+import { listNovels, deleteNovel } from './rag/store.js';
+import { getJob, startIngestJob } from './rag/ingestJob.js';
 
 /**
  * 服务端 v2a：
@@ -148,23 +148,16 @@ app.post('/api/novels', async (c: Context) => {
   const chunks = chunkNovel(raw);
   if (chunks.length === 0) return c.json({ error: '未解析到有效内容（需包含"第X章"等章节标题）' }, 400);
 
-  const novelId = createNovel(title);
-  try {
-    // 批量 embedding：每批 16 条控请求体，串行控限流（免费档）
-    const BATCH = 16;
-    const withVectors: { chapter: string; index: number; text: string; vector: number[] }[] = [];
-    for (let i = 0; i < chunks.length; i += BATCH) {
-      const batch = chunks.slice(i, i + BATCH);
-      const vectors = await embed(batch.map((b) => b.text));
-      batch.forEach((b, j) => withVectors.push({ ...b, vector: vectors[j] }));
-    }
-    insertChunks(novelId, withVectors);
-    return c.json({ novelId, chunkCount: withVectors.length });
-  } catch (err) {
-    // embedding 失败必须回滚 novel 记录，防止半截数据污染小说库
-    deleteNovel(novelId);
-    return c.json({ error: `入库失败: ${err instanceof Error ? err.message : String(err)}` }, 500);
-  }
+  // 异步入库：立即返回 jobId，前端轮询进度（长篇向量化要几分钟，不能同步挂着）
+  const jobId = startIngestJob(title, raw);
+  return c.json({ jobId }, 202);
+});
+
+/** 入库任务进度查询 */
+app.get('/api/novels/jobs/:id', (c: Context) => {
+  const job = getJob(c.req.param('id') as string);
+  if (!job) return c.json({ error: '任务不存在' }, 404);
+  return c.json(job);
 });
 
 app.delete('/api/novels/:id', (c: Context) =>

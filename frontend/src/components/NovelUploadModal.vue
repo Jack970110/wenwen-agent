@@ -56,7 +56,12 @@ async function doUpload() {
         </div>
       </label>
 
-      <div v-if="store.uploadMsg" class="msg ok">{{ store.uploadMsg }}</div>
+      <div v-if="store.uploadMsg" class="msg ok">
+        {{ store.uploadMsg }}
+        <div v-if="store.progress.total > 0 && store.uploading" class="bar">
+          <div class="bar-fill" :style="{ width: (store.progress.embedded / store.progress.total) * 100 + '%' }"></div>
+        </div>
+      </div>
       <div v-if="store.uploadError" class="msg err">{{ store.uploadError }}</div>
 
       <button class="submit" :disabled="store.uploading || !title.trim() || !file" @click="doUpload">
@@ -90,6 +95,8 @@ async function doUpload() {
 .file-row { cursor: pointer; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .file-row:hover { border-color: var(--accent); }
 .msg { font-size: 13px; padding: 8px 12px; border-radius: 8px; margin-bottom: 12px; }
+.bar { margin-top: 8px; height: 5px; background: var(--bg); border-radius: 3px; overflow: hidden; }
+.bar-fill { height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent2)); transition: width .5s; }
 .msg.ok { background: rgba(74,222,128,.1); color: var(--ok, #4ade80); border: 1px solid rgba(74,222,128,.3); }
 .msg.err { background: rgba(248,113,113,.1); color: var(--err); border: 1px solid rgba(248,113,113,.3); }
 .submit {
