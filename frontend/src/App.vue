@@ -34,7 +34,8 @@ async function loadHistory() {
     id: m.id,
     role: m.role,
     text: m.parts.filter((p: any) => p.type === 'text').map((p: any) => p.text).join(''),
-    tools: [], // 历史消息未持久化工具调用，回看时不显示时间线
+    // 从持久化的 tool part 还原时间线
+    tools: m.parts.filter((p: any) => p.type === 'tool').map((p: any) => ({ name: p.name, args: p.args, error: p.error })),
   }));
 }
 

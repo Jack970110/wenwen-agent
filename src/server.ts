@@ -3,9 +3,9 @@ import { serve } from '@hono/node-server';
 import { Hono, type Context } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { serveStatic } from '@hono/node-server/serve-static';
-import { convertToModelMessages, type UIMessage } from 'ai';
+import { type ModelMessage } from 'ai';
 import { runAgent } from './agent.js';
-import { appendMessage, createSession, deleteSession, getMessages, listSessions, sessionExists } from './db.js';
+import { appendMessage, createSession, deleteSession, getMessages, listSessions, sessionExists, type StoredMessage } from './db.js';
 import { chunkNovel } from './rag/chunker.js';
 import { listNovels, deleteNovel, getNovelByTitle } from './rag/store.js';
 import { getJob, startIngestJob } from './rag/ingestJob.js';
@@ -38,7 +38,7 @@ app.post('/api/chat', async (c: Context) => {
   // 前端选择器传入的聚焦小说：不存在时忽略（退化为全库检索），不阻塞对话
   const focus = novelTitle && getNovelByTitle(novelTitle) ? novelTitle : undefined;
 
-  const userMsg: UIMessage = {
+  const userMsg: StoredMessage = {
     id: crypto.randomUUID(),
     role: 'user',
     parts: [{ type: 'text', text: message.trim() }],
@@ -49,7 +49,7 @@ app.post('/api/chat', async (c: Context) => {
   // 历史卫生：正常序列必须 user/assistant 交替。
   // 回答被停止或失败时会留下"悬空提问"（连续两条 user），小模型会被带偏。
   // 策略：只保留最后一条悬空提问（即本轮），丢弃更早的。
-  const history: UIMessage[] = [];
+  const history: StoredMessage[] = [];
   for (const m of rawHistory) {
     if (m.role === 'user' && history[history.length - 1]?.role === 'user') {
       history.pop();
@@ -66,16 +66,25 @@ app.post('/api/chat', async (c: Context) => {
 
   return streamSSE(c, async (stream) => {
     let assistantText = '';
+    // 本轮工具调用记录：随回答一起持久化，前端回看时可还原时间线
+    const toolEvents: { name: string; args: string; error?: boolean }[] = [];
     let errored = false;
     try {
-      const result = runAgent(await convertToModelMessages(history), abortController.signal, focus);
+      // 存储消息转模型消息：只保留 text part（工具记录是给人看的，不进模型上下文）
+      const modelInput = history.map((m) => ({
+        role: m.role,
+        content: m.parts.filter((p: StoredMessage['parts'][number]) => p.type === 'text').map((p) => p.text).join(''),
+      }));
+      const result = runAgent(modelInput as ModelMessage[], abortController.signal, focus);
 
       for await (const part of result.fullStream) {
         if (part.type === 'tool-call') {
+          toolEvents.push({ name: part.toolName, args: JSON.stringify(part.input) });
           await stream.writeSSE({
             data: JSON.stringify({ type: 'tool-call', toolName: part.toolName, args: part.input }),
           });
         } else if (part.type === 'tool-error') {
+          toolEvents.push({ name: part.toolName, args: String(part.input ?? ''), error: true });
           await stream.writeSSE({
             data: JSON.stringify({ type: 'tool-error', toolName: part.toolName, error: String(part.error) }),
           });
@@ -88,7 +97,10 @@ app.post('/api/chat', async (c: Context) => {
       appendMessage(sessionId, {
         id: crypto.randomUUID(),
         role: 'assistant',
-        parts: [{ type: 'text', text: assistantText }],
+        parts: [
+          ...toolEvents.map((t) => ({ type: 'tool' as const, name: t.name, args: t.args, error: t.error })),
+          { type: 'text', text: assistantText },
+        ],
       });
       await stream.writeSSE({ data: JSON.stringify({ type: 'done' }) });
     } catch (err) {
@@ -98,7 +110,10 @@ app.post('/api/chat', async (c: Context) => {
         appendMessage(sessionId, {
           id: crypto.randomUUID(),
           role: 'assistant',
-          parts: [{ type: 'text', text: (assistantText || '（已停止生成）') + '' }],
+          parts: [
+            ...toolEvents.map((t) => ({ type: 'tool' as const, name: t.name, args: t.args, error: t.error })),
+            { type: 'text', text: (assistantText || '（已停止生成）') + '' },
+          ],
         });
         await stream.writeSSE({ data: JSON.stringify({ type: 'done', stopped: true }) });
         return;
