@@ -54,11 +54,11 @@ export const searchNovel = tool({
   description: '在已入库的小说中做语义检索，返回与问题最相关的原文片段（含章节出处）。用户问题涉及人物、地点、物品、情节等内容时必须先调用此工具。',
   inputSchema: z.object({
     query: z.string().describe('检索问题，如"主角在哪里发现了日记"'),
-    topK: z.number().int().min(1).max(10).optional().describe('返回片段数，默认 5'),
+    topK: z.number().int().min(1).max(10).optional().describe('返回片段数，默认 3'),
   }),
   execute: async ({ query, topK }) => {
     const [vector] = await embed([query]);
-    const results = searchNovelChunks(vector, topK ?? 5);
+    const results = searchNovelChunks(vector, topK ?? 3);
     return results.length
       ? results
       : { message: '未检索到相关内容，可能还没有小说入库' };
