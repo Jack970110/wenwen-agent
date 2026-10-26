@@ -94,7 +94,7 @@ app.post('/api/chat', async (c: Context) => {
          * 阶段 2：Z1 不带工具，基于资料做纯推理合成——"廉价模型检索、强模型合成"
          */
         await sendEvent({ type: 'status', message: '检索资料中…' });
-        const fast = runAgent(modelInput as ModelMessage[], abortController.signal, focus, false);
+        const fast = runAgent(modelInput as ModelMessage[], abortController.signal, focus, { retrievalOnly: true });
         const toolResults: { name: string; output: string }[] = [];
         for await (const part of fast.fullStream) {
           if (part.type === 'tool-call') {
@@ -132,7 +132,7 @@ app.post('/api/chat', async (c: Context) => {
           }
         }
       } else {
-        const result = runAgent(modelInput as ModelMessage[], abortController.signal, focus, false);
+        const result = runAgent(modelInput as ModelMessage[], abortController.signal, focus);
 
         for await (const part of result.fullStream) {
           if (part.type === 'tool-call') {

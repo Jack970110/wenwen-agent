@@ -63,15 +63,22 @@ const MODEL_DEEP = process.env.MODEL_DEEP || 'glm-z1-flash';
  * - 模型输出工具调用 → SDK 执行 execute → 把结果喂回模型 → 模型继续思考
  * - stopWhen 限制最多 8 步，防止模型无限循环调用工具（生产必配的护栏）
  */
-export function runAgent(messages: ModelMessage[], abortSignal?: AbortSignal, focusTitle?: string, deep = false) {
+export function runAgent(
+  messages: ModelMessage[],
+  abortSignal?: AbortSignal,
+  focusTitle?: string,
+  opts: { deep?: boolean; retrievalOnly?: boolean } = {},
+) {
   const result = streamText({
-    model: zhipu(deep ? MODEL_DEEP : MODEL_FAST),
+    model: zhipu(opts.deep ? MODEL_DEEP : MODEL_FAST),
     system: buildSystemPrompt(focusTitle),
     messages,
     abortSignal,
     maxRetries: 5, // 免费模型高峰期限流（429），多给几次退避重试的机会
     tools: allTools,
-    stopWhen: stepCountIs(8),
+    // retrievalOnly：只跑第一轮（模型发起工具调用 + SDK 执行工具）就停，
+    // 不让模型生成会被丢弃的回答——两阶段深度模式的阶段 1 用
+    stopWhen: opts.retrievalOnly ? stepCountIs(1) : stepCountIs(8),
   });
 
   return result;
