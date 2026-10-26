@@ -6,9 +6,13 @@ import Sidebar from './components/Sidebar.vue';
 import MessageBubble from './components/MessageBubble.vue';
 import ToolLine from './components/ToolLine.vue';
 import ChatInput from './components/ChatInput.vue';
+import { useNovelStore } from './stores/novels';
 
 const store = useSessionStore();
+const novelStore = useNovelStore();
 const sessionId = ref('');
+/** 会话级聚焦小说：选中后检索定向到该书（空 = 全库检索） */
+const focusNovel = ref('');
 
 // sessionId 变化 = 切换会话，重建交互层（妙笔模式：会话隔离在交互层之上）
 const chat = useChatStream(sessionId);
@@ -45,6 +49,7 @@ store.refresh().then(async () => {
   }
   sessionId.value = store.currentId;
 });
+novelStore.refresh();
 watch(() => store.currentId, (id) => {
   // store.create()/open() 更新 currentId 后同步交互层（首次初始化跳过，上面已处理）
   if (id && id !== sessionId.value) {
@@ -62,7 +67,13 @@ const inputRef = ref<InstanceType<typeof ChatInput>>();
     <main>
       <header>
         <div class="page-title">{{ store.list.find(s => s.id === sessionId)?.title || '新对话' }}</div>
-        <div class="model">glm-4-flash · RAG · MCP</div>
+        <div class="header-right">
+          <select v-model="focusNovel" class="novel-select" title="锁定本次对话检索的小说范围">
+            <option value="">🔍 全库检索</option>
+            <option v-for="n in novelStore.list" :key="n.id" :value="n.title">📖 {{ n.title }}</option>
+          </select>
+          <div class="model">glm-4-flash · RAG · MCP</div>
+        </div>
       </header>
 
       <div class="chat-area">
@@ -95,7 +106,7 @@ const inputRef = ref<InstanceType<typeof ChatInput>>();
       <ChatInput
         ref="inputRef"
         :disabled="chat.streaming.value"
-        @send="chat.send($event, () => store.refresh())"
+        @send="chat.send($event, focusNovel || undefined, () => store.refresh())"
         @stop="chat.stop()"
       />
     </main>
@@ -110,7 +121,14 @@ header {
   display: flex; align-items: center; justify-content: space-between;
 }
 .page-title { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.model { font-size: 12px; color: var(--dim); background: var(--panel2); padding: 3px 10px; border-radius: 99px; flex-shrink: 0; margin-left: 12px; }
+.model { font-size: 12px; color: var(--dim); background: var(--panel2); padding: 3px 10px; border-radius: 99px; flex-shrink: 0; }
+.header-right { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+.novel-select {
+  background: var(--panel2); border: 1px solid var(--border); border-radius: 99px;
+  color: var(--text); font-size: 12px; padding: 3px 10px; outline: none; cursor: pointer;
+  max-width: 180px;
+}
+.novel-select:focus { border-color: var(--accent); }
 .chat-area { flex: 1; overflow-y: auto; padding: 20px; }
 .error-banner {
   max-width: 780px; margin: 0 auto 16px; padding: 10px 14px;

@@ -16,7 +16,7 @@ export function useChatStream(sessionId: Ref<string>) {
   const errorMsg = ref('');
   let abortCtrl: AbortController | null = null;
 
-  async function send(text: string, onDone?: () => void) {
+  async function send(text: string, novelTitle?: string, onDone?: () => void) {
     if (streaming.value || !text.trim()) return;
     streaming.value = true;
     errorMsg.value = '';
@@ -31,7 +31,7 @@ export function useChatStream(sessionId: Ref<string>) {
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionId: sessionId.value, message: text }),
+        body: JSON.stringify({ sessionId: sessionId.value, message: text, novelTitle: novelTitle || undefined }),
         signal: abortCtrl.signal,
       });
       if (!res.ok || !res.body) {

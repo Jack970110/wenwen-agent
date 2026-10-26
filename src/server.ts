@@ -7,7 +7,7 @@ import { convertToModelMessages, type UIMessage } from 'ai';
 import { runAgent } from './agent.js';
 import { appendMessage, createSession, deleteSession, getMessages, listSessions, sessionExists } from './db.js';
 import { chunkNovel } from './rag/chunker.js';
-import { listNovels, deleteNovel } from './rag/store.js';
+import { listNovels, deleteNovel, getNovelByTitle } from './rag/store.js';
 import { getJob, startIngestJob } from './rag/ingestJob.js';
 
 /**
@@ -24,9 +24,10 @@ import { getJob, startIngestJob } from './rag/ingestJob.js';
 const app = new Hono();
 
 app.post('/api/chat', async (c: Context) => {
-  const { sessionId, message } = (await c.req.json()) as {
+  const { sessionId, message, novelTitle } = (await c.req.json()) as {
     sessionId: string;
     message: string;
+    novelTitle?: string;
   };
   if (!sessionId || !message?.trim()) {
     return c.json({ error: 'sessionId 和 message 必填' }, 400);
@@ -34,6 +35,8 @@ app.post('/api/chat', async (c: Context) => {
   if (!sessionExists(sessionId)) {
     return c.json({ error: '会话不存在' }, 404);
   }
+  // 前端选择器传入的聚焦小说：不存在时忽略（退化为全库检索），不阻塞对话
+  const focus = novelTitle && getNovelByTitle(novelTitle) ? novelTitle : undefined;
 
   const userMsg: UIMessage = {
     id: crypto.randomUUID(),
@@ -65,7 +68,7 @@ app.post('/api/chat', async (c: Context) => {
     let assistantText = '';
     let errored = false;
     try {
-      const result = runAgent(await convertToModelMessages(history), abortController.signal);
+      const result = runAgent(await convertToModelMessages(history), abortController.signal, focus);
 
       for await (const part of result.fullStream) {
         if (part.type === 'tool-call') {
