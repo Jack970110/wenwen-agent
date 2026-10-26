@@ -9,9 +9,22 @@ import type { ChatEvent } from '../types';
  * SSE 手动解析的原因：EventSource 只支持 GET，带 body 的 POST 推流
  * 必须用 fetch + ReadableStream 手动处理分包边界（buf 残留不完整行）。
  */
+export interface ToolCall {
+  name: string;
+  args: string;
+  error?: boolean;
+}
+
+export interface ChatMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  text: string;
+  /** 该条消息对应的工具调用（仅本条消息的，不共享） */
+  tools: ToolCall[];
+}
+
 export function useChatStream(sessionId: Ref<string>) {
-  const messages = ref<{ id: string; role: 'user' | 'assistant'; text: string }[]>([]);
-  const toolCalls = ref<{ name: string; args: string; error?: boolean }[]>([]);
+  const messages = ref<ChatMessage[]>([]);
   const streaming = ref(false);
   const errorMsg = ref('');
   let abortCtrl: AbortController | null = null;
@@ -20,11 +33,10 @@ export function useChatStream(sessionId: Ref<string>) {
     if (streaming.value || !text.trim()) return;
     streaming.value = true;
     errorMsg.value = '';
-    messages.value.push({ id: crypto.randomUUID(), role: 'user', text });
-    // 占位的 assistant 消息，流式内容追加到它身上
-    const assistant = { id: crypto.randomUUID(), role: 'assistant' as const, text: '' };
+    messages.value.push({ id: crypto.randomUUID(), role: 'user', text, tools: [] });
+    // 占位的 assistant 消息，流式内容与工具调用都挂它自己身上
+    const assistant: ChatMessage = { id: crypto.randomUUID(), role: 'assistant', text: '', tools: [] };
     messages.value.push(assistant);
-    toolCalls.value = [];
 
     abortCtrl = new AbortController();
     try {
@@ -56,9 +68,9 @@ export function useChatStream(sessionId: Ref<string>) {
           if (evt.type === 'text-delta') {
             assistant.text += evt.text!;
           } else if (evt.type === 'tool-call') {
-            toolCalls.value.push({ name: evt.toolName!, args: JSON.stringify(evt.args) });
+            assistant.tools.push({ name: evt.toolName!, args: JSON.stringify(evt.args) });
           } else if (evt.type === 'tool-error') {
-            toolCalls.value.push({ name: evt.toolName!, args: String(evt.args), error: true });
+            assistant.tools.push({ name: evt.toolName!, args: String(evt.args), error: true });
           } else if (evt.type === 'error') {
             errorMsg.value = evt.message!;
           }
@@ -78,5 +90,5 @@ export function useChatStream(sessionId: Ref<string>) {
     abortCtrl?.abort();
   }
 
-  return { messages, toolCalls, streaming, errorMsg, send, stop };
+  return { messages, streaming, errorMsg, send, stop };
 }

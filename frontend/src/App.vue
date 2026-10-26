@@ -34,9 +34,8 @@ async function loadHistory() {
     id: m.id,
     role: m.role,
     text: m.parts.filter((p: any) => p.type === 'text').map((p: any) => p.text).join(''),
+    tools: [], // 历史消息未持久化工具调用，回看时不显示时间线
   }));
-  chat.toolCalls.value = [];
-  chat.errorMsg.value = '';
 }
 
 // 初始化：优先恢复最近一条对话（Pinia 状态不持久化，刷新会丢 currentId；
@@ -78,18 +77,16 @@ const inputRef = ref<InstanceType<typeof ChatInput>>();
 
       <div class="chat-area">
         <template v-if="chat.messages.value.length">
-          <template v-for="(m, i) in chat.messages.value" :key="m.id">
-            <!-- 助手消息前插入它对应的工具调用时间线 -->
+          <template v-for="m in chat.messages.value" :key="m.id">
+            <!-- 工具时间线挂在自己所属的 assistant 消息上 -->
             <template v-if="m.role === 'assistant'">
-              <ToolLine
-                v-for="(t, j) in chat.toolCalls.value"
-                :key="'t' + j"
-                :name="t.name"
-                :args="t.args"
-                :error="t.error"
-              />
+              <ToolLine v-for="(t, j) in m.tools" :key="m.id + 't' + j" :name="t.name" :args="t.args" :error="t.error" />
             </template>
-            <MessageBubble :role="m.role" :text="m.text" :streaming="chat.streaming.value && i === chat.messages.value.length - 1" />
+            <MessageBubble
+              :role="m.role"
+              :text="m.text"
+              :streaming="chat.streaming.value && m === chat.messages.value[chat.messages.value.length - 1]"
+            />
           </template>
           <div v-if="chat.errorMsg.value" class="error-banner">❌ {{ chat.errorMsg.value }}</div>
         </template>
