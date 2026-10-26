@@ -3,11 +3,15 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "workspaces": [
+    "frontend"
+  ],
   "scripts": {
     "dev": "tsx src/index.ts",
     "server": "tsx src/server.ts",
-    "frontend": "npm --prefix frontend run dev",
-    "build": "npm --prefix frontend run build",
+    "frontend": "npm run dev -w frontend",
+    "build": "npm run build -w frontend",
+    "check": "npm run check --workspaces --if-present && tsc --noEmit",
     "mcp:http": "tsx src/mcp-http-server.ts",
     "test:mcp": "tsx src/test-mcp.ts",
     "test:mcp:http": "tsx src/test-mcp-http.ts",
@@ -27,6 +31,6 @@
   "devDependencies": {
     "@types/node": "^26.6.5",
     "tsx": "^4.23.15",
-    "typescript": "^7.0.2"
+    "typescript": "^5.9.0"
   }
 }
