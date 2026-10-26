@@ -1,4 +1,4 @@
-import { ref, type Ref } from 'vue';
+import { reactive, ref, type Ref } from 'vue';
 import type { ChatEvent } from '../types';
 
 /**
@@ -41,7 +41,9 @@ export function useChatStream(sessionId: Ref<string>) {
     errorMsg.value = '';
     messages.value.push({ id: crypto.randomUUID(), role: 'user', text, tools: [], reasoning: '' });
     // 占位的 assistant 消息，流式内容与工具调用都挂它自己身上
-    const assistant: ChatMessage = { id: crypto.randomUUID(), role: 'assistant', text: '', tools: [], reasoning: '' };
+    // 必须用 reactive()：push 进 ref 数组后直接改原始对象不触发响应式（拿到的是 raw 而非 proxy），
+    // 流式内容会攒到 streaming=false 的那次重渲染才一次性出现
+    const assistant = reactive<ChatMessage>({ id: crypto.randomUUID(), role: 'assistant', text: '', tools: [], reasoning: '' });
     messages.value.push(assistant);
 
     abortCtrl = new AbortController();
