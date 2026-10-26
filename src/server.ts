@@ -109,6 +109,9 @@ app.post('/api/chat', async (c: Context) => {
         }
 
         await sendEvent({ type: 'status', message: '深度思考中…' });
+        const deepStart = Date.now();
+        let firstDeltaAt = 0;
+        let deltaCount = 0;
         const context = toolResults.length
           ? toolResults.map((r) => `[${r.name} 检索结果]\n${r.output}`).join('\n\n')
           : '（本轮没有检索到资料，若问题涉及小说内容请如实说明未找到）';
@@ -125,12 +128,20 @@ app.post('/api/chat', async (c: Context) => {
         });
         for await (const part of deepResult.fullStream) {
           if (part.type === 'reasoning-delta') {
+            if (!firstDeltaAt) firstDeltaAt = Date.now();
+            deltaCount++;
             await sendEvent({ type: 'reasoning-delta', text: part.text });
           } else if (part.type === 'text-delta') {
+            if (!firstDeltaAt) firstDeltaAt = Date.now();
+            deltaCount++;
             assistantText += part.text;
             await sendEvent({ type: 'text-delta', text: part.text });
           }
         }
+        console.log(
+          `[deep] Z1 阶段2: delta=${deltaCount} 个, 首个 delta 延迟 ${firstDeltaAt ? firstDeltaAt - deepStart : '-'}ms, 生成总耗时 ${Date.now() - deepStart}ms` +
+          (deltaCount > 1 && firstDeltaAt ? `（若首延迟 ≪ 总耗时则为真流式）` : ''),
+        );
       } else {
         const result = runAgent(modelInput as ModelMessage[], abortController.signal, focus);
 
