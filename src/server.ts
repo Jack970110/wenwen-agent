@@ -142,7 +142,8 @@ app.post('/api/novels', async (c: Context) => {
 
   if (!title) return c.json({ error: '请填写小说名' }, 400);
   if (!file || !file.name.endsWith('.txt')) return c.json({ error: '仅支持 txt 文件' }, 400);
-  if (file.size > 5 * 1024 * 1024) return c.json({ error: '文件不能超过 5MB' }, 400);
+  // 20MB ≈ 700 万字 ≈ 1.7 万块，异步入库 + 429 重试可覆盖；上限主要防滥用而非技术瓶颈
+  if (file.size > 20 * 1024 * 1024) return c.json({ error: '文件不能超过 20MB' }, 400);
 
   const raw = await file.text();
   const chunks = chunkNovel(raw);

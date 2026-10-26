@@ -10,23 +10,32 @@ export async function embed(texts: string[]): Promise<number[][]> {
   const apiKey = process.env.SILICONFLOW_API_KEY;
   if (!apiKey) throw new Error('未配置 SILICONFLOW_API_KEY（siliconflow.cn 注册获取，免费）');
 
-  const res = await fetch(`${BASE_URL}/embeddings`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ model: MODEL, input: texts, encoding_format: 'float' }),
-  });
+  const body = JSON.stringify({ model: MODEL, input: texts, encoding_format: 'float' });
 
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`Embedding 请求失败 (${res.status}): ${body.slice(0, 200)}`);
+  // 免费档有限流（429），大文件入库几百次请求必然偶尔撞上：
+  // 指数退避重试 4 次（1s/2s/4s/8s），重试期间任务进度不回滚
+  let lastError: Error = new Error('unknown');
+  for (let attempt = 0; attempt <= 4; attempt++) {
+    if (attempt > 0) await new Promise((r) => setTimeout(r, 1000 * 2 ** (attempt - 1)));
+
+    const res = await fetch(`${BASE_URL}/embeddings`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body,
+    });
+
+    if (res.ok) {
+      const data = (await res.json()) as { data: { embedding: number[]; index: number }[] };
+      // 按 index 排序还原输入顺序
+      return data.data.sort((a, b) => a.index - b.index).map((d) => d.embedding);
+    }
+
+    const errBody = await res.text();
+    lastError = new Error(`Embedding 请求失败 (${res.status}): ${errBody.slice(0, 200)}`);
+    // 只有 429/5xx 值得重试；401 余额类错误直接失败
+    if (res.status !== 429 && res.status < 500) throw lastError;
   }
-
-  const data = (await res.json()) as { data: { embedding: number[]; index: number }[] };
-  // 按 index 排序还原输入顺序
-  return data.data.sort((a, b) => a.index - b.index).map((d) => d.embedding);
+  throw lastError;
 }
 
 export function cosineSimilarity(a: number[], b: number[]): number {

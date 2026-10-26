@@ -49,7 +49,7 @@ async function doUpload() {
       </label>
 
       <label class="field">
-        <span>txt 文件（≤5MB，需含"第X章"章节标题）</span>
+        <span>txt 文件（≤20MB，需含"第X章"章节标题）</span>
         <div class="file-row" @click="fileEl?.click()">
           <span>{{ file?.name || '选择文件…' }}</span>
           <input ref="fileEl" type="file" accept=".txt" hidden :disabled="store.uploading" @change="onFileChange" />
