@@ -1,8 +1,8 @@
 import { tool } from 'ai';
 import { z } from 'zod';
 import { queryChaptersData, analyzeTrendData, saveReportData } from './dataService.js';
-import { embed } from './rag/embed.js';
-import { getNovelByTitle, listNovels, searchNovelChunks } from './rag/store.js';
+import { getNovelByTitle, listNovels } from './rag/store.js';
+import { retrieve } from './rag/retrieve.js';
 
 /**
  * 工具（Function Calling）是 Agent 的"手"：
@@ -65,8 +65,7 @@ export const searchNovel = tool({
       if (!novel) return { message: `书库中没有《${novelTitle}》这本小说`, available: listNovels().map((n) => n.title) };
       novelId = novel.id;
     }
-    const [vector] = await embed([query]);
-    const results = searchNovelChunks(vector, topK ?? 3, novelId);
+    const results = await retrieve(query, topK ?? 3, novelId);
     return results.length ? results : { message: '未检索到相关内容' };
   },
 });
