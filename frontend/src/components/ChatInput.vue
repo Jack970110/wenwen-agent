@@ -1,12 +1,23 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue';
 
-const props = defineProps<{ disabled?: boolean; deep?: boolean }>();
+const props = defineProps<{ disabled?: boolean; deepMode?: 'auto' | 'deep' | 'fast' }>();
 const emit = defineEmits<{
   (e: 'send', text: string): void;
   (e: 'stop'): void;
-  (e: 'toggle-deep'): void;
+  (e: 'cycle-deep'): void;
 }>();
+
+const MODE_LABEL: Record<string, string> = {
+  auto: '🧠 深度·自动',
+  deep: '💡 深度·强制',
+  fast: '⚡ 快速·强制',
+};
+const MODE_TIP: Record<string, string> = {
+  auto: '自动路由：分析/因果类问题走深度模型，其余走快速模型（点击切换）',
+  deep: '已强制深度思考（Z1 推理模型，较慢）。点击切换为强制快速',
+  fast: '已强制快速回答。点击恢复自动路由',
+};
 
 const input = ref('');
 const el = ref<HTMLTextAreaElement>();
@@ -49,10 +60,10 @@ watch(input, () => {
       <div class="actions">
         <button
           class="deep-toggle"
-          :class="{ on: deep }"
-          :title="deep ? '深度思考已开启（Z1 推理模型，较慢）' : '开启深度思考（Z1 推理模型，较慢）'"
-          @click="emit('toggle-deep')"
-        >💡{{ deep ? '深度思考·开' : '深度思考' }}</button>
+          :class="{ on: deepMode === 'deep' }"
+          :title="MODE_TIP[deepMode || 'auto']"
+          @click="emit('cycle-deep')"
+        >{{ MODE_LABEL[deepMode || 'auto'] }}</button>
         <button v-if="!disabled" class="send" @click="doSend">发送</button>
         <button v-else class="stop" @click="emit('stop')">停止</button>
       </div>

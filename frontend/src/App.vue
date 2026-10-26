@@ -13,8 +13,19 @@ const novelStore = useNovelStore();
 const sessionId = ref('');
 /** 会话级聚焦小说：选中后检索定向到该书（空 = 全库检索） */
 const focusNovel = ref('');
-/** 深度思考：走 Z1 推理模型，展示思维链 */
-const deep = ref(false);
+/** 深度思考三态：auto=启发式自动路由（默认）/ deep=强制深度 / fast=强制快速 */
+const deepMode = ref<'auto' | 'deep' | 'fast'>('auto');
+
+/** 启发式判断：多步因果/分析类问题走深度模型，短事实问句走快速模型 */
+function looksComplex(q: string): boolean {
+  return q.length > 40 || /为什么|分析|对比|总结|原因|区别|评价|隐喻|象征|怎么看|怎么办|解读|含义|哪个更/.test(q);
+}
+
+function resolveDeep(text: string): boolean {
+  if (deepMode.value === 'deep') return true;
+  if (deepMode.value === 'fast') return false;
+  return looksComplex(text);
+}
 
 // sessionId 变化 = 切换会话，重建交互层（妙笔模式：会话隔离在交互层之上）
 const chat = useChatStream(sessionId);
@@ -108,10 +119,10 @@ const inputRef = ref<InstanceType<typeof ChatInput>>();
       <ChatInput
         ref="inputRef"
         :disabled="chat.streaming.value"
-        :deep="deep"
-        @send="chat.send($event, { novelTitle: focusNovel || undefined, deep }, () => store.refresh())"
+        :deep-mode="deepMode"
+        @send="chat.send($event, { novelTitle: focusNovel || undefined, deep: resolveDeep($event) }, () => store.refresh())"
         @stop="chat.stop()"
-        @toggle-deep="deep = !deep"
+        @cycle-deep="deepMode = deepMode === 'auto' ? 'deep' : deepMode === 'deep' ? 'fast' : 'auto'"
       />
     </main>
   </div>
