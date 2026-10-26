@@ -71,9 +71,13 @@ npm run test:mcp:http  # 验证 HTTP 全流程
 
 ### v3 —— RAG + 上线要素
 
-**v3a：迷你 RAG**
-- [ ] 接入 pgvector：书籍设定/角色知识库，问答带引用标注
-- [ ] 检索召回测试（简单评测集）
+**v3a：迷你 RAG** ✅
+- [x] 切块管道：章节识别 + 段落聚合（`src/rag/chunker.ts`）
+- [x] 向量化：硅基流动 bge-m3（免费），批量入库 CLI（`npm run ingest`）
+- [x] 向量存储：SQLite + 暴力余弦检索（块数上万再迁 pgvector）
+- [x] `searchNovel` 工具接入 Agent，回答标注章节出处
+- [x] RAG 质量调优：动态注入书单修触发、反幻觉规则、提炼式回答
+- [ ] bge-reranker 精排（二期）
 
 **v3b：上线要素（生产化改造）**
 - [ ] 鉴权：登录 + JWT
