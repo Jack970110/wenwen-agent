@@ -2,7 +2,7 @@ import { tool } from 'ai';
 import { z } from 'zod';
 import { queryChaptersData, analyzeTrendData, saveReportData } from './dataService.js';
 import { embed } from './rag/embed.js';
-import { searchNovelChunks } from './rag/store.js';
+import { getNovelByTitle, listNovels, searchNovelChunks } from './rag/store.js';
 
 /**
  * 工具（Function Calling）是 Agent 的"手"：
@@ -51,17 +51,23 @@ export const generateReport = tool({
 
 /** 工具 4：小说语义检索（RAG）——回答基于检索到的原文片段 */
 export const searchNovel = tool({
-  description: '在已入库的小说中做语义检索，返回与问题最相关的原文片段（含章节出处）。用户问题涉及人物、地点、物品、情节等内容时必须先调用此工具。',
+  description: '在已入库的小说中做语义检索，返回与问题最相关的原文片段（含书名和章节出处）。用户问题涉及人物、地点、物品、情节等内容时必须先调用此工具。',
   inputSchema: z.object({
     query: z.string().describe('检索问题，如"主角在哪里发现了日记"'),
+    novelTitle: z.string().optional().describe('小说名。用户指定了某本书、或上下文明确在聊某本书时传入；未指定则全库检索'),
     topK: z.number().int().min(1).max(10).optional().describe('返回片段数，默认 3'),
   }),
-  execute: async ({ query, topK }) => {
+  execute: async ({ query, novelTitle, topK }) => {
+    // 按书名解析 novelId：书名不存在时明确报错，防止模型幻觉出书名后静默全库检索
+    let novelId: string | undefined;
+    if (novelTitle) {
+      const novel = getNovelByTitle(novelTitle);
+      if (!novel) return { message: `书库中没有《${novelTitle}》这本小说`, available: listNovels().map((n) => n.title) };
+      novelId = novel.id;
+    }
     const [vector] = await embed([query]);
-    const results = searchNovelChunks(vector, topK ?? 3);
-    return results.length
-      ? results
-      : { message: '未检索到相关内容，可能还没有小说入库' };
+    const results = searchNovelChunks(vector, topK ?? 3, novelId);
+    return results.length ? results : { message: '未检索到相关内容' };
   },
 });
 

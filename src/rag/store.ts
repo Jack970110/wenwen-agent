@@ -59,19 +59,29 @@ export function insertChunks(novelId: string, chunks: { chapter: string; index: 
   }
 }
 
+export function getNovelByTitle(title: string): { id: string; title: string } | undefined {
+  return db.prepare('SELECT id, title FROM novels WHERE title = ?').get(title) as
+    | { id: string; title: string }
+    | undefined;
+}
+
 export interface RetrievedChunk {
+  novelTitle?: string;
   chapter: string;
   text: string;
   similarity: number;
 }
 
-/** 语义检索：余弦相似度暴力扫描，返回 topK */
-export function searchNovelChunks(queryVector: number[], topK = 5): RetrievedChunk[] {
-  const rows = db.prepare('SELECT chapter, text, vector FROM chunks').all() as {
-    chapter: string; text: string; vector: string;
-  }[];
+/** 语义检索：余弦相似度暴力扫描，返回 topK；可按小说过滤 */
+export function searchNovelChunks(queryVector: number[], topK = 3, novelId?: string): RetrievedChunk[] {
+  const rows = (
+    novelId
+      ? db.prepare('SELECT c.chapter, c.text, c.vector, n.title as novelTitle FROM chunks c JOIN novels n ON n.id = c.novel_id WHERE c.novel_id = ?').all(novelId)
+      : db.prepare('SELECT c.chapter, c.text, c.vector, n.title as novelTitle FROM chunks c JOIN novels n ON n.id = c.novel_id').all()
+  ) as { chapter: string; text: string; vector: string; novelTitle: string }[];
   return rows
     .map((r) => ({
+      novelTitle: r.novelTitle,
       chapter: r.chapter,
       text: r.text,
       similarity: cosineSimilarity(queryVector, JSON.parse(r.vector)),
