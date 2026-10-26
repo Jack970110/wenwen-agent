@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue';
+import { ref, computed, watch, nextTick } from 'vue';
 import { useSessionStore } from './stores/sessions';
 import { useChatStream } from './composables/useChatStream';
 import Sidebar from './components/Sidebar.vue';
@@ -79,6 +79,21 @@ const lastMsgId = computed(() => {
   const list = chat.messages.value;
   return list.length ? list[list.length - 1].id : '';
 });
+
+/** 流式输出自动滚动：内容或状态变化时跟随到底部；用户上翻历史时不打扰 */
+const chatArea = ref<HTMLElement>();
+async function followBottom() {
+  const el = chatArea.value;
+  if (!el) return;
+  // 距底部 120px 以内视为"正在阅读最新内容"，否则用户在翻历史，不滚动
+  const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+  if (!nearBottom) return;
+  await nextTick(); // 等 DOM 渲染完新内容再滚
+  el.scrollTop = el.scrollHeight;
+}
+watch(() => chat.messages.value, () => followBottom(), { deep: true });
+watch(() => chat.status.value, () => followBottom());
+watch(sessionId, () => nextTick(() => { if (chatArea.value) chatArea.value.scrollTop = chatArea.value.scrollHeight; }));
 </script>
 
 <template>
@@ -96,7 +111,7 @@ const lastMsgId = computed(() => {
         </div>
       </header>
 
-      <div class="chat-area">
+      <div class="chat-area" ref="chatArea">
         <template v-if="chat.messages.value.length">
           <template v-for="m in chat.messages.value" :key="m.id">
             <!-- 工具时间线挂在自己所属的 assistant 消息上 -->
