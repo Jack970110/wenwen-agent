@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref, watch, nextTick } from 'vue';
 import MarkdownIt from 'markdown-it';
 
 const md = new MarkdownIt({ breaks: true });
@@ -26,6 +26,15 @@ const parsed = computed(() => {
   };
 });
 const rendered = computed(() => (props.role === 'assistant' ? md.render(parsed.value.answer) : ''));
+
+/** 思维链面板内部滚动跟随：内容递增时贴住底部，让"思考的递进感"可见 */
+const reasoningEl = ref<HTMLElement>();
+watch(() => parsed.value.reasoning, async () => {
+  const el = reasoningEl.value;
+  if (!el) return;
+  await nextTick();
+  el.scrollTop = el.scrollHeight;
+});
 </script>
 
 <template>
@@ -39,7 +48,7 @@ const rendered = computed(() => (props.role === 'assistant' ? md.render(parsed.v
              :open 是初始值绑定——用户手动折叠后，只要 autoOpen 不变化就不会被覆盖 -->
         <details v-if="parsed.reasoning" class="reasoning" :open="autoOpen">
           <summary>💡 思考过程</summary>
-          <div class="reasoning-body">{{ parsed.reasoning }}</div>
+          <div class="reasoning-body" ref="reasoningEl">{{ parsed.reasoning }}</div>
         </details>
         <div v-if="streaming && !parsed.answer && !parsed.reasoning" class="content thinking">思考中<span class="dots"><i>·</i><i>·</i><i>·</i></span></div>
         <div v-else-if="parsed.answer || !streaming" class="content md" :class="{ streaming }" v-html="rendered"></div>
