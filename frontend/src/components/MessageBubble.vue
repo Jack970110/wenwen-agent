@@ -21,6 +21,7 @@ const rendered = computed(() => (props.role === 'assistant' ? md.render(props.te
     <div class="bubble">
       <!-- 用户消息纯文本；助手消息走 Markdown 渲染 -->
       <div v-if="role === 'user'" class="content plain">{{ text }}</div>
+      <div v-else-if="streaming && !text" class="content thinking">思考中<span class="dots"><i>·</i><i>·</i><i>·</i></span></div>
       <div v-else class="content md" :class="{ streaming }" v-html="rendered"></div>
     </div>
   </div>
@@ -49,5 +50,11 @@ const rendered = computed(() => (props.role === 'assistant' ? md.render(props.te
 .content.md :deep(table) { border-collapse: collapse; margin: 8px 0; width: 100%; }
 .content.md :deep(th), .content.md :deep(td) { border: 1px solid var(--border); padding: 5px 10px; font-size: 13px; }
 .content.md.streaming::after { content: '▍'; color: var(--accent); animation: blink 1s infinite; }
+.content.thinking { color: var(--dim); font-style: normal; }
+.content.thinking .dots i {
+  animation: blink 1.2s infinite; font-style: normal; color: var(--accent);
+}
+.content.thinking .dots i:nth-child(2) { animation-delay: .2s; }
+.content.thinking .dots i:nth-child(3) { animation-delay: .4s; }
 @keyframes blink { 50% { opacity: 0; } }
 </style>
