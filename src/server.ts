@@ -6,6 +6,9 @@ import { serveStatic } from '@hono/node-server/serve-static';
 import { convertToModelMessages, type UIMessage } from 'ai';
 import { runAgent } from './agent.js';
 import { appendMessage, createSession, deleteSession, getMessages, listSessions, sessionExists } from './db.js';
+import { chunkNovel } from './rag/chunker.js';
+import { embed } from './rag/embed.js';
+import { createNovel, deleteNovel, insertChunks, listNovels } from './rag/store.js';
 
 /**
  * 服务端 v2a：
@@ -127,6 +130,45 @@ app.post('/api/sessions', (c: Context) => c.json({ sessionId: createSession() })
 
 app.delete('/api/sessions/:id', (c: Context) =>
   c.json({ ok: deleteSession(c.req.param('id') as string) }),
+);
+
+/** 小说库：列表 / 上传入库 / 删除 */
+app.get('/api/novels', (c: Context) => c.json(listNovels()));
+
+app.post('/api/novels', async (c: Context) => {
+  const body = await c.req.parseBody();
+  const file = body.file as File | undefined;
+  const title = String(body.title ?? '').trim();
+
+  if (!title) return c.json({ error: '请填写小说名' }, 400);
+  if (!file || !file.name.endsWith('.txt')) return c.json({ error: '仅支持 txt 文件' }, 400);
+  if (file.size > 5 * 1024 * 1024) return c.json({ error: '文件不能超过 5MB' }, 400);
+
+  const raw = await file.text();
+  const chunks = chunkNovel(raw);
+  if (chunks.length === 0) return c.json({ error: '未解析到有效内容（需包含"第X章"等章节标题）' }, 400);
+
+  const novelId = createNovel(title);
+  try {
+    // 批量 embedding：每批 16 条控请求体，串行控限流（免费档）
+    const BATCH = 16;
+    const withVectors: { chapter: string; index: number; text: string; vector: number[] }[] = [];
+    for (let i = 0; i < chunks.length; i += BATCH) {
+      const batch = chunks.slice(i, i + BATCH);
+      const vectors = await embed(batch.map((b) => b.text));
+      batch.forEach((b, j) => withVectors.push({ ...b, vector: vectors[j] }));
+    }
+    insertChunks(novelId, withVectors);
+    return c.json({ novelId, chunkCount: withVectors.length });
+  } catch (err) {
+    // embedding 失败必须回滚 novel 记录，防止半截数据污染小说库
+    deleteNovel(novelId);
+    return c.json({ error: `入库失败: ${err instanceof Error ? err.message : String(err)}` }, 500);
+  }
+});
+
+app.delete('/api/novels/:id', (c: Context) =>
+  c.json({ ok: deleteNovel(c.req.param('id') as string) }),
 );
 
 // 静态托管前端构建产物（必须放在 API 路由之后）

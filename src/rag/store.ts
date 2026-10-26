@@ -40,6 +40,12 @@ export function listNovels(): { id: string; title: string; chunkCount: number }[
   `).all() as any;
 }
 
+export function deleteNovel(novelId: string): boolean {
+  db.prepare('DELETE FROM chunks WHERE novel_id = ?').run(novelId);
+  const result = db.prepare('DELETE FROM novels WHERE id = ?').run(novelId);
+  return result.changes > 0;
+}
+
 export function insertChunks(novelId: string, chunks: { chapter: string; index: number; text: string; vector: number[] }[]) {
   const stmt = db.prepare('INSERT INTO chunks (novel_id, chapter, idx, text, vector) VALUES (?, ?, ?, ?, ?)');
   // node:sqlite 没有 better-sqlite3 的 .transaction()，手动控制事务

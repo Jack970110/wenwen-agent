@@ -1,10 +1,14 @@
 <script setup lang="ts">
+import { onMounted, ref } from 'vue';
 import { useSessionStore } from '../stores/sessions';
+import { useNovelStore } from '../stores/novels';
+import NovelUploadModal from './NovelUploadModal.vue';
 
-const store = useSessionStore();
+const sessionStore = useSessionStore();
+const novelStore = useNovelStore();
+const uploadOpen = ref(false);
 
-defineProps<{ collapsed?: boolean }>();
-const emit = defineEmits<{ (e: 'select', id: string): void }>();
+onMounted(() => novelStore.refresh());
 </script>
 
 <template>
@@ -16,23 +20,48 @@ const emit = defineEmits<{ (e: 'select', id: string): void }>();
         <div class="sub">小说分析 · 数据分析</div>
       </div>
     </div>
-    <button class="new-chat" @click="store.create()">＋ 新对话</button>
-    <div class="section-label">对话记录</div>
+    <button class="new-chat" @click="sessionStore.create()">＋ 新对话</button>
+    <div class="section-label">
+      对话记录
+    </div>
     <div class="session-list">
       <div
-        v-for="s in store.list"
+        v-for="s in sessionStore.list"
         :key="s.id"
         class="session-item"
-        :class="{ active: s.id === store.currentId }"
-        @click="emit('select', s.id)"
+        :class="{ active: s.id === sessionStore.currentId }"
+        @click="$emit('select', s.id)"
       >
         <span class="title">{{ s.title }}</span>
-        <button class="del" title="删除对话" @click.stop="store.remove(s.id)">✕</button>
+        <button class="del" title="删除对话" @click.stop="sessionStore.remove(s.id)">✕</button>
       </div>
-      <div v-if="!store.list.length" class="empty">暂无对话</div>
+      <div v-if="!sessionStore.list.length" class="empty">暂无对话</div>
+
+      <!-- 小说库：RAG 数据源管理 -->
+      <div class="section-label novel-label">
+        小说库
+        <button class="add" title="上传小说" @click="uploadOpen = true">＋</button>
+      </div>
+      <div v-for="n in novelStore.list" :key="n.id" class="session-item novel">
+        <span class="title">📖 {{ n.title }} <i>{{ n.chunkCount }}块</i></span>
+        <button class="del" title="删除小说" @click.stop="novelStore.remove(n.id)">✕</button>
+      </div>
     </div>
+
+    <NovelUploadModal :open="uploadOpen" @close="uploadOpen = false" />
   </aside>
 </template>
+
+<style scoped>
+.novel-label { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; }
+.add {
+  background: transparent; border: 1px solid var(--border); border-radius: 5px;
+  color: var(--dim); cursor: pointer; width: 20px; height: 20px; font-size: 12px; line-height: 1;
+}
+.add:hover { color: var(--accent); border-color: var(--accent); }
+.session-item.novel .title i { font-style: normal; font-size: 11px; opacity: .6; margin-left: 4px; }
+</style>
+
 
 <style scoped>
 .sidebar {
