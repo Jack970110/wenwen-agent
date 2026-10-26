@@ -9,6 +9,8 @@ const props = defineProps<{
   text: string;
   streaming?: boolean;
   reasoning?: string;
+  /** 思考过程初始展开（仅本会话内生成的最后一条消息），用户仍可手动折叠 */
+  autoOpen?: boolean;
 }>();
 
 // 必须用 computed：props.text 流式更新时重新渲染 Markdown。
@@ -33,8 +35,9 @@ const rendered = computed(() => (props.role === 'assistant' ? md.render(parsed.v
       <!-- 用户消息纯文本；助手消息走 Markdown 渲染 -->
       <div v-if="role === 'user'" class="content plain">{{ text }}</div>
       <template v-else>
-        <!-- 深度思考模式：可折叠思维链（来自 <think> 标签解析） -->
-        <details v-if="parsed.reasoning" class="reasoning" :open="streaming && !parsed.answer">
+        <!-- 深度思考模式：可折叠思维链（来自 <think> 标签解析）。
+             :open 是初始值绑定——用户手动折叠后，只要 autoOpen 不变化就不会被覆盖 -->
+        <details v-if="parsed.reasoning" class="reasoning" :open="autoOpen">
           <summary>💡 思考过程</summary>
           <div class="reasoning-body">{{ parsed.reasoning }}</div>
         </details>

@@ -23,6 +23,8 @@ export interface ChatMessage {
   tools: ToolCall[];
   /** 深度思考模式下的思维链（可折叠展示） */
   reasoning: string;
+  /** 来自历史加载的消息：思考过程默认收起（本次会话内生成的默认展开） */
+  fromHistory?: boolean;
 }
 
 export function useChatStream(sessionId: Ref<string>) {

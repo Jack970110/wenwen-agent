@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue';
+import { ref, computed, watch } from 'vue';
 import { useSessionStore } from './stores/sessions';
 import { useChatStream } from './composables/useChatStream';
 import Sidebar from './components/Sidebar.vue';
@@ -49,6 +49,8 @@ async function loadHistory() {
     text: m.parts.filter((p: any) => p.type === 'text').map((p: any) => p.text).join(''),
     // 从持久化的 tool part 还原时间线
     tools: m.parts.filter((p: any) => p.type === 'tool').map((p: any) => ({ name: p.name, args: p.args, error: p.error })),
+    reasoning: '',
+    fromHistory: true,
   }));
 }
 
@@ -72,6 +74,11 @@ watch(() => store.currentId, (id) => {
 });
 
 const inputRef = ref<InstanceType<typeof ChatInput>>();
+/** 最后一条消息的 id：本次会话内生成的思考过程默认展开 */
+const lastMsgId = computed(() => {
+  const list = chat.messages.value;
+  return list.length ? list[list.length - 1].id : '';
+});
 </script>
 
 <template>
@@ -100,6 +107,7 @@ const inputRef = ref<InstanceType<typeof ChatInput>>();
               :role="m.role"
               :text="m.text"
               :reasoning="m.reasoning"
+              :auto-open="m.id === lastMsgId && !m.fromHistory"
               :streaming="chat.streaming.value && m === chat.messages.value[chat.messages.value.length - 1]"
             />
           </template>
