@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from 'vue';
 import MarkdownIt from 'markdown-it';
 
 const md = new MarkdownIt({ breaks: true });
@@ -9,7 +10,9 @@ const props = defineProps<{
   streaming?: boolean;
 }>();
 
-const rendered = props.role === 'assistant' ? md.render(props.text) : '';
+// 必须用 computed：props.text 流式更新时重新渲染 Markdown。
+// 之前写成普通常量导致响应式断裂——首次渲染算一次就不再更新，页面"无反应"
+const rendered = computed(() => (props.role === 'assistant' ? md.render(props.text) : ''));
 </script>
 
 <template>
