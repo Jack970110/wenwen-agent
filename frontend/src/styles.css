@@ -1,0 +1,12 @@
+:root {
+  --bg: #0f1117; --panel: #171a23; --panel2: #1d212e;
+  --border: #2a2f3f; --text: #e4e7ef; --dim: #8b93a7;
+  --accent: #6c8cff; --accent2: #8b6cff; --err: #f87171;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--text);
+  font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; font-size: 14px;
+}
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }

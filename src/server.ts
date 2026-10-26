@@ -129,8 +129,10 @@ app.delete('/api/sessions/:id', (c: Context) =>
   c.json({ ok: deleteSession(c.req.param('id') as string) }),
 );
 
-// 静态托管聊天页面（必须放在 API 路由之后）
-app.use('*', serveStatic({ root: './web' }));
+// 静态托管前端构建产物（必须放在 API 路由之后）
+app.use('*', serveStatic({ root: './frontend/dist' }));
+// SPA 兜底：非 API 路径回退到 index.html
+app.get('*', serveStatic({ path: './frontend/dist/index.html' }));
 
 const port = Number(process.env.PORT) || 3001;
 serve({ fetch: app.fetch, port }, (info) => {
