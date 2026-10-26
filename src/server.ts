@@ -3,12 +3,20 @@ import { serve } from '@hono/node-server';
 import { Hono, type Context } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { serveStatic } from '@hono/node-server/serve-static';
-import { type ModelMessage } from 'ai';
+import { type ModelMessage, streamText } from 'ai';
+import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { runAgent } from './agent.js';
 import { appendMessage, createSession, deleteSession, getMessages, listSessions, sessionExists, type StoredMessage } from './db.js';
 import { chunkNovel } from './rag/chunker.js';
 import { listNovels, deleteNovel, getNovelByTitle } from './rag/store.js';
 import { getJob, startIngestJob } from './rag/ingestJob.js';
+
+/** 深度模型直连（两阶段模式的阶段 2 用） */
+const zhipuDeep = createOpenAICompatible({
+  name: 'zhipu',
+  baseURL: 'https://open.bigmodel.cn/api/paas/v4',
+  apiKey: process.env.ZHIPU_API_KEY,
+});
 
 /**
  * 服务端 v2a：
@@ -76,25 +84,67 @@ app.post('/api/chat', async (c: Context) => {
         role: m.role,
         content: m.parts.filter((p: StoredMessage['parts'][number]) => p.type === 'text').map((p) => p.text).join(''),
       }));
-      const result = runAgent(modelInput as ModelMessage[], abortController.signal, focus, deep === true);
 
-      for await (const part of result.fullStream) {
-        if (part.type === 'tool-call') {
-          toolEvents.push({ name: part.toolName, args: JSON.stringify(part.input) });
-          await stream.writeSSE({
-            data: JSON.stringify({ type: 'tool-call', toolName: part.toolName, args: part.input }),
-          });
-        } else if (part.type === 'tool-error') {
-          toolEvents.push({ name: part.toolName, args: String(part.input ?? ''), error: true });
-          await stream.writeSSE({
-            data: JSON.stringify({ type: 'tool-error', toolName: part.toolName, error: String(part.error) }),
-          });
-        } else if (part.type === 'reasoning-delta') {
-          // 深度模型的思维链：单独事件类型，前端折叠展示
-          await stream.writeSSE({ data: JSON.stringify({ type: 'reasoning-delta', text: part.text }) });
-        } else if (part.type === 'text-delta') {
-          assistantText += part.text;
-          await stream.writeSSE({ data: JSON.stringify({ type: 'text-delta', text: part.text }) });
+      const sendEvent = (evt: Record<string, unknown>) => stream.writeSSE({ data: JSON.stringify(evt) });
+
+      if (deep) {
+        /**
+         * 两阶段深度模式（绕过智谱 Z1 流式工具调用的接口缺陷）：
+         * 阶段 1：快模型跑 Agent loop 完成工具调用/检索（此链路稳定），收集检索结果
+         * 阶段 2：Z1 不带工具，基于资料做纯推理合成——"廉价模型检索、强模型合成"
+         */
+        await sendEvent({ type: 'status', message: '检索资料中…' });
+        const fast = runAgent(modelInput as ModelMessage[], abortController.signal, focus, false);
+        const toolResults: { name: string; output: string }[] = [];
+        for await (const part of fast.fullStream) {
+          if (part.type === 'tool-call') {
+            toolEvents.push({ name: part.toolName, args: JSON.stringify(part.input) });
+            await sendEvent({ type: 'tool-call', toolName: part.toolName, args: part.input });
+          } else if (part.type === 'tool-error') {
+            toolEvents.push({ name: part.toolName, args: String(part.input ?? ''), error: true });
+            await sendEvent({ type: 'tool-error', toolName: part.toolName, error: String(part.error) });
+          } else if (part.type === 'tool-result') {
+            toolResults.push({ name: part.toolName, output: JSON.stringify(part.output).slice(0, 6000) });
+          }
+        }
+
+        await sendEvent({ type: 'status', message: '深度思考中…' });
+        const context = toolResults.length
+          ? toolResults.map((r) => `[${r.name} 检索结果]\n${r.output}`).join('\n\n')
+          : '（本轮没有检索到资料，若问题涉及小说内容请如实说明未找到）';
+        const deepResult = streamText({
+          model: zhipuDeep(process.env.MODEL_DEEP || 'glm-z1-flash'),
+          system: `你是深度分析助手。基于提供的检索资料深度思考后回答用户最后的问题。要求：提炼归纳、标注书名和章节出处、资料里没有的内容不编造、资料不足时如实说明。`,
+          messages: [
+            ...modelInput,
+            { role: 'assistant', content: `[已完成的检索资料]\n${context}` },
+            { role: 'user', content: '请基于以上检索资料，深度思考后回答我之前的问题。' },
+          ],
+          abortSignal: abortController.signal,
+          maxRetries: 5,
+        });
+        for await (const part of deepResult.fullStream) {
+          if (part.type === 'reasoning-delta') {
+            await sendEvent({ type: 'reasoning-delta', text: part.text });
+          } else if (part.type === 'text-delta') {
+            assistantText += part.text;
+            await sendEvent({ type: 'text-delta', text: part.text });
+          }
+        }
+      } else {
+        const result = runAgent(modelInput as ModelMessage[], abortController.signal, focus, false);
+
+        for await (const part of result.fullStream) {
+          if (part.type === 'tool-call') {
+            toolEvents.push({ name: part.toolName, args: JSON.stringify(part.input) });
+            await sendEvent({ type: 'tool-call', toolName: part.toolName, args: part.input });
+          } else if (part.type === 'tool-error') {
+            toolEvents.push({ name: part.toolName, args: String(part.input ?? ''), error: true });
+            await sendEvent({ type: 'tool-error', toolName: part.toolName, error: String(part.error) });
+          } else if (part.type === 'text-delta') {
+            assistantText += part.text;
+            await sendEvent({ type: 'text-delta', text: part.text });
+          }
         }
       }
 

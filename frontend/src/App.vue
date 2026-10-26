@@ -93,6 +93,7 @@ const inputRef = ref<InstanceType<typeof ChatInput>>();
             />
           </template>
           <div v-if="chat.errorMsg.value" class="error-banner">❌ {{ chat.errorMsg.value }}</div>
+          <div v-if="chat.streaming.value && chat.status.value" class="status-line">⏳ {{ chat.status.value }}</div>
         </template>
 
         <div v-else class="empty-state">
@@ -137,6 +138,10 @@ header {
   max-width: 780px; margin: 0 auto 16px; padding: 10px 14px;
   background: rgba(248,113,113,.1); border: 1px solid var(--err); border-radius: 8px;
   color: var(--err); font-size: 13px;
+}
+.status-line {
+  max-width: 780px; margin: 0 auto 16px; text-align: center;
+  color: var(--accent); font-size: 12px; animation: blink 1.6s infinite;
 }
 .empty-state { text-align: center; margin-top: 16vh; }
 .big { font-size: 26px; font-weight: 700; background: linear-gradient(135deg, var(--accent), var(--accent2)); -webkit-background-clip: text; background-clip: text; color: transparent; }

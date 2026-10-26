@@ -29,6 +29,8 @@ export function useChatStream(sessionId: Ref<string>) {
   const messages = ref<ChatMessage[]>([]);
   const streaming = ref(false);
   const errorMsg = ref('');
+  /** 当前阶段状态（检索资料中/深度思考中…），流结束清空 */
+  const status = ref('');
   let abortCtrl: AbortController | null = null;
 
   async function send(text: string, opts: { novelTitle?: string; deep?: boolean } = {}, onDone?: () => void) {
@@ -76,6 +78,8 @@ export function useChatStream(sessionId: Ref<string>) {
             assistant.text += evt.text!;
           } else if (evt.type === 'reasoning-delta') {
             assistant.reasoning += evt.text!;
+          } else if (evt.type === 'status') {
+            status.value = evt.message!;
           } else if (evt.type === 'tool-call') {
             assistant.tools.push({ name: evt.toolName!, args: JSON.stringify(evt.args) });
           } else if (evt.type === 'tool-error') {
@@ -90,6 +94,7 @@ export function useChatStream(sessionId: Ref<string>) {
       if (e.name !== 'AbortError') errorMsg.value = e.message || '连接中断';
     } finally {
       streaming.value = false;
+      status.value = '';
       abortCtrl = null;
     }
   }
@@ -99,5 +104,5 @@ export function useChatStream(sessionId: Ref<string>) {
     abortCtrl?.abort();
   }
 
-  return { messages, streaming, errorMsg, send, stop };
+  return { messages, streaming, status, errorMsg, send, stop };
 }
