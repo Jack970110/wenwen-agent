@@ -13,6 +13,8 @@ const novelStore = useNovelStore();
 const sessionId = ref('');
 /** 会话级聚焦小说：选中后检索定向到该书（空 = 全库检索） */
 const focusNovel = ref('');
+/** 深度思考：走 Z1 推理模型，展示思维链 */
+const deep = ref(false);
 
 // sessionId 变化 = 切换会话，重建交互层（妙笔模式：会话隔离在交互层之上）
 const chat = useChatStream(sessionId);
@@ -86,6 +88,7 @@ const inputRef = ref<InstanceType<typeof ChatInput>>();
             <MessageBubble
               :role="m.role"
               :text="m.text"
+              :reasoning="m.reasoning"
               :streaming="chat.streaming.value && m === chat.messages.value[chat.messages.value.length - 1]"
             />
           </template>
@@ -104,8 +107,10 @@ const inputRef = ref<InstanceType<typeof ChatInput>>();
       <ChatInput
         ref="inputRef"
         :disabled="chat.streaming.value"
-        @send="chat.send($event, focusNovel || undefined, () => store.refresh())"
+        :deep="deep"
+        @send="chat.send($event, { novelTitle: focusNovel || undefined, deep }, () => store.refresh())"
         @stop="chat.stop()"
+        @toggle-deep="deep = !deep"
       />
     </main>
   </div>

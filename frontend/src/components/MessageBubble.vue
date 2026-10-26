@@ -8,11 +8,22 @@ const props = defineProps<{
   role: 'user' | 'assistant';
   text: string;
   streaming?: boolean;
+  reasoning?: string;
 }>();
 
 // 必须用 computed：props.text 流式更新时重新渲染 Markdown。
-// 之前写成普通常量导致响应式断裂——首次渲染算一次就不再更新，页面"无反应"
-const rendered = computed(() => (props.role === 'assistant' ? md.render(props.text) : ''));
+// 同时解析 <think> 标签：Z1 等推理模型的思维链内联在正文里（而非独立字段），
+// 流式期间闭合标签未到也正确处理（思维链区实时滚动，正文区为空）
+const parsed = computed(() => {
+  if (props.role !== 'assistant') return { reasoning: '', answer: props.text };
+  const m = props.text.match(/<think>([\s\S]*?)(<\/think>|$)/);
+  if (!m) return { reasoning: '', answer: props.text };
+  return {
+    reasoning: m[1].trim(),
+    answer: props.text.replace(/<think>[\s\S]*?(<\/think>|$)/, '').trim(),
+  };
+});
+const rendered = computed(() => (props.role === 'assistant' ? md.render(parsed.value.answer) : ''));
 </script>
 
 <template>
@@ -21,8 +32,15 @@ const rendered = computed(() => (props.role === 'assistant' ? md.render(props.te
     <div class="bubble">
       <!-- 用户消息纯文本；助手消息走 Markdown 渲染 -->
       <div v-if="role === 'user'" class="content plain">{{ text }}</div>
-      <div v-else-if="streaming && !text" class="content thinking">思考中<span class="dots"><i>·</i><i>·</i><i>·</i></span></div>
-      <div v-else class="content md" :class="{ streaming }" v-html="rendered"></div>
+      <template v-else>
+        <!-- 深度思考模式：可折叠思维链（来自 <think> 标签解析） -->
+        <details v-if="parsed.reasoning" class="reasoning" :open="streaming && !parsed.answer">
+          <summary>💡 思考过程</summary>
+          <div class="reasoning-body">{{ parsed.reasoning }}</div>
+        </details>
+        <div v-if="streaming && !parsed.answer && !parsed.reasoning" class="content thinking">思考中<span class="dots"><i>·</i><i>·</i><i>·</i></span></div>
+        <div v-else-if="parsed.answer || !streaming" class="content md" :class="{ streaming }" v-html="rendered"></div>
+      </template>
     </div>
   </div>
 </template>
@@ -50,6 +68,17 @@ const rendered = computed(() => (props.role === 'assistant' ? md.render(props.te
 .content.md :deep(table) { border-collapse: collapse; margin: 8px 0; width: 100%; }
 .content.md :deep(th), .content.md :deep(td) { border: 1px solid var(--border); padding: 5px 10px; font-size: 13px; }
 .content.md.streaming::after { content: '▍'; color: var(--accent); animation: blink 1s infinite; }
+.reasoning {
+  margin-bottom: 8px; border: 1px solid var(--border); border-radius: 8px;
+  background: rgba(139,108,255,.06); font-size: 13px;
+}
+.reasoning summary {
+  padding: 7px 12px; cursor: pointer; color: var(--accent2); user-select: none; font-size: 12px;
+}
+.reasoning-body {
+  padding: 4px 12px 10px; color: var(--dim); line-height: 1.6; white-space: pre-wrap;
+  max-height: 240px; overflow-y: auto; font-size: 12px;
+}
 .content.thinking { color: var(--dim); font-style: normal; }
 .content.thinking .dots i {
   animation: blink 1.2s infinite; font-style: normal; color: var(--accent);

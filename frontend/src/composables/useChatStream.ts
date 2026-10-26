@@ -21,6 +21,8 @@ export interface ChatMessage {
   text: string;
   /** 该条消息对应的工具调用（仅本条消息的，不共享） */
   tools: ToolCall[];
+  /** 深度思考模式下的思维链（可折叠展示） */
+  reasoning: string;
 }
 
 export function useChatStream(sessionId: Ref<string>) {
@@ -29,13 +31,13 @@ export function useChatStream(sessionId: Ref<string>) {
   const errorMsg = ref('');
   let abortCtrl: AbortController | null = null;
 
-  async function send(text: string, novelTitle?: string, onDone?: () => void) {
+  async function send(text: string, opts: { novelTitle?: string; deep?: boolean } = {}, onDone?: () => void) {
     if (streaming.value || !text.trim()) return;
     streaming.value = true;
     errorMsg.value = '';
-    messages.value.push({ id: crypto.randomUUID(), role: 'user', text, tools: [] });
+    messages.value.push({ id: crypto.randomUUID(), role: 'user', text, tools: [], reasoning: '' });
     // 占位的 assistant 消息，流式内容与工具调用都挂它自己身上
-    const assistant: ChatMessage = { id: crypto.randomUUID(), role: 'assistant', text: '', tools: [] };
+    const assistant: ChatMessage = { id: crypto.randomUUID(), role: 'assistant', text: '', tools: [], reasoning: '' };
     messages.value.push(assistant);
 
     abortCtrl = new AbortController();
@@ -43,7 +45,12 @@ export function useChatStream(sessionId: Ref<string>) {
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionId: sessionId.value, message: text, novelTitle: novelTitle || undefined }),
+        body: JSON.stringify({
+          sessionId: sessionId.value,
+          message: text,
+          novelTitle: opts.novelTitle || undefined,
+          deep: opts.deep || undefined,
+        }),
         signal: abortCtrl.signal,
       });
       if (!res.ok || !res.body) {
@@ -67,6 +74,8 @@ export function useChatStream(sessionId: Ref<string>) {
           const evt: ChatEvent = JSON.parse(line.slice(5));
           if (evt.type === 'text-delta') {
             assistant.text += evt.text!;
+          } else if (evt.type === 'reasoning-delta') {
+            assistant.reasoning += evt.text!;
           } else if (evt.type === 'tool-call') {
             assistant.tools.push({ name: evt.toolName!, args: JSON.stringify(evt.args) });
           } else if (evt.type === 'tool-error') {

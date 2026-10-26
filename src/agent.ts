@@ -51,14 +51,21 @@ function buildSystemPrompt(focusTitle?: string): string {
 }
 
 /**
+ * 模型路由：快模型做默认（响应速度优先），深度模型按需启用（推理质量优先）。
+ * 模型名进配置，A/B 对比和供应商切换不改代码。
+ */
+const MODEL_FAST = process.env.MODEL_FAST || 'glm-4-flash';
+const MODEL_DEEP = process.env.MODEL_DEEP || 'glm-z1-flash';
+
+/**
  * Agent Loop 的核心就是这一行 streamText：
  * - 模型输出文本 → 直接流式给用户
  * - 模型输出工具调用 → SDK 执行 execute → 把结果喂回模型 → 模型继续思考
  * - stopWhen 限制最多 8 步，防止模型无限循环调用工具（生产必配的护栏）
  */
-export function runAgent(messages: ModelMessage[], abortSignal?: AbortSignal, focusTitle?: string) {
+export function runAgent(messages: ModelMessage[], abortSignal?: AbortSignal, focusTitle?: string, deep = false) {
   const result = streamText({
-    model: zhipu('glm-4-flash'),
+    model: zhipu(deep ? MODEL_DEEP : MODEL_FAST),
     system: buildSystemPrompt(focusTitle),
     messages,
     abortSignal,

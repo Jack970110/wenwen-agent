@@ -24,10 +24,11 @@ import { getJob, startIngestJob } from './rag/ingestJob.js';
 const app = new Hono();
 
 app.post('/api/chat', async (c: Context) => {
-  const { sessionId, message, novelTitle } = (await c.req.json()) as {
+  const { sessionId, message, novelTitle, deep } = (await c.req.json()) as {
     sessionId: string;
     message: string;
     novelTitle?: string;
+    deep?: boolean;
   };
   if (!sessionId || !message?.trim()) {
     return c.json({ error: 'sessionId 和 message 必填' }, 400);
@@ -75,7 +76,7 @@ app.post('/api/chat', async (c: Context) => {
         role: m.role,
         content: m.parts.filter((p: StoredMessage['parts'][number]) => p.type === 'text').map((p) => p.text).join(''),
       }));
-      const result = runAgent(modelInput as ModelMessage[], abortController.signal, focus);
+      const result = runAgent(modelInput as ModelMessage[], abortController.signal, focus, deep === true);
 
       for await (const part of result.fullStream) {
         if (part.type === 'tool-call') {
@@ -88,6 +89,9 @@ app.post('/api/chat', async (c: Context) => {
           await stream.writeSSE({
             data: JSON.stringify({ type: 'tool-error', toolName: part.toolName, error: String(part.error) }),
           });
+        } else if (part.type === 'reasoning-delta') {
+          // 深度模型的思维链：单独事件类型，前端折叠展示
+          await stream.writeSSE({ data: JSON.stringify({ type: 'reasoning-delta', text: part.text }) });
         } else if (part.type === 'text-delta') {
           assistantText += part.text;
           await stream.writeSSE({ data: JSON.stringify({ type: 'text-delta', text: part.text }) });

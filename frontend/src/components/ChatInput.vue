@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue';
 
-const props = defineProps<{ disabled?: boolean }>();
+const props = defineProps<{ disabled?: boolean; deep?: boolean }>();
 const emit = defineEmits<{
   (e: 'send', text: string): void;
   (e: 'stop'): void;
+  (e: 'toggle-deep'): void;
 }>();
 
 const input = ref('');
@@ -45,8 +46,16 @@ watch(input, () => {
         :disabled="disabled"
         @keydown="onKeydown"
       ></textarea>
-      <button v-if="!disabled" class="send" @click="doSend">发送</button>
-      <button v-else class="stop" @click="emit('stop')">停止</button>
+      <div class="actions">
+        <button
+          class="deep-toggle"
+          :class="{ on: deep }"
+          :title="deep ? '深度思考已开启（Z1 推理模型，较慢）' : '开启深度思考（Z1 推理模型，较慢）'"
+          @click="emit('toggle-deep')"
+        >💡{{ deep ? '深度思考·开' : '深度思考' }}</button>
+        <button v-if="!disabled" class="send" @click="doSend">发送</button>
+        <button v-else class="stop" @click="emit('stop')">停止</button>
+      </div>
     </div>
     <div class="hint">AI 生成内容仅供参考 · 请勿输入敏感信息</div>
   </footer>
@@ -65,12 +74,14 @@ textarea {
   color: var(--text); font: inherit; line-height: 1.5; max-height: 120px;
 }
 textarea::placeholder { color: var(--dim); }
-.send, .stop {
-  border: none; border-radius: 8px; padding: 8px 18px; cursor: pointer;
+.send, .stop, .deep-toggle {
+  border: none; border-radius: 8px; padding: 8px 14px; cursor: pointer;
   font-size: 13px; color: #fff; flex-shrink: 0;
 }
 .send { background: linear-gradient(135deg, var(--accent), var(--accent2)); }
 .send:disabled { opacity: .4; cursor: not-allowed; }
 .stop { background: transparent; border: 1px solid var(--err); color: var(--err); }
+.deep-toggle { background: var(--panel2); color: var(--dim); border: 1px solid var(--border); }
+.deep-toggle.on { background: rgba(139,108,255,.15); color: var(--accent2); border-color: var(--accent2); }
 .hint { max-width: 780px; margin: 8px auto 0; text-align: center; color: var(--dim); font-size: 12px; }
 </style>

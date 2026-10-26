@@ -7,7 +7,7 @@ export interface UIMessage {
 }
 
 export interface ChatEvent {
-  type: 'tool-call' | 'tool-error' | 'text-delta' | 'done' | 'error';
+  type: 'tool-call' | 'tool-error' | 'text-delta' | 'reasoning-delta' | 'done' | 'error';
   toolName?: string;
   args?: unknown;
   text?: string;
