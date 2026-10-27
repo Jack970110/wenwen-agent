@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { generateText, stepCountIs } from 'ai';
-import { allTools } from './tools.js';
+import { allTools } from '../src/tools.js';
 
 /** 诊断：Z1 非流式 + 工具调用是否正常 */
 const zhipu = createOpenAICompatible({

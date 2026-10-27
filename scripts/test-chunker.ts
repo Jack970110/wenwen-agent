@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { chunkNovel } from './rag/chunker.js';
+import { chunkNovel } from '../src/rag/chunker.js';
 
 const chunks = chunkNovel(readFileSync(process.argv[2] || 'data/雪夜来客.txt', 'utf-8'));
 console.log('切块数:', chunks.length);

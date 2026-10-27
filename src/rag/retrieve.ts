@@ -1,6 +1,7 @@
 import { embed } from './embed.js';
 import { rerank } from './rerank.js';
 import { searchNovelChunks } from './store.js';
+import { ragScope } from './context.js';
 
 /**
  * 统一检索入口：向量粗召回 → rerank 精排。
@@ -25,7 +26,9 @@ export interface RetrievedChunk {
 
 export async function retrieve(query: string, topK = 3, novelId?: string): Promise<RetrievedChunk[]> {
   const [vector] = await embed([query]);
-  const candidates = searchNovelChunks(vector, CANDIDATES, novelId);
+  // 游客请求只扫公开演示库（作用域由 HTTP 层通过 ALS 设置）
+  const onlyPublic = ragScope.getStore()?.onlyPublic;
+  const candidates = searchNovelChunks(vector, CANDIDATES, novelId, onlyPublic);
   if (candidates.length === 0) return [];
 
   try {

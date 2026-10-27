@@ -7,6 +7,7 @@ import MessageBubble from './components/MessageBubble.vue';
 import ToolLine from './components/ToolLine.vue';
 import ChatInput from './components/ChatInput.vue';
 import { useNovelStore } from './stores/novels';
+import { fetchMe } from './stores/me';
 
 const store = useSessionStore();
 const novelStore = useNovelStore();
@@ -65,6 +66,7 @@ store.refresh().then(async () => {
   sessionId.value = store.currentId;
 });
 novelStore.refresh();
+fetchMe(); // 游客/管理员身份，决定管理按钮显隐
 watch(() => store.currentId, (id) => {
   // store.create()/open() 更新 currentId 后同步交互层（首次初始化跳过，上面已处理）
   if (id && id !== sessionId.value) {

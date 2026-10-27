@@ -17,6 +17,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS novels (
     id TEXT PRIMARY KEY,
     title TEXT NOT NULL,
+    owner TEXT NOT NULL DEFAULT 'admin',
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
   CREATE TABLE IF NOT EXISTS chunks (
@@ -28,17 +29,27 @@ db.exec(`
     vector TEXT NOT NULL
   );
 `);
+// 老库补列 + 演示库标记：游客只能检索 owner='public' 的小说
+function addColumnIfMissing(table: string, column: string, def: string) {
+  const cols = (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((c) => c.name);
+  if (!cols.includes(column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${def}`);
+}
+addColumnIfMissing('novels', 'owner', "TEXT NOT NULL DEFAULT 'admin'");
+db.exec(`UPDATE novels SET owner = 'public' WHERE title = '雪夜来客'`);
 
-export function createNovel(title: string): string {
+export function createNovel(title: string, owner = 'admin'): string {
   const id = crypto.randomUUID();
-  db.prepare('INSERT INTO novels (id, title) VALUES (?, ?)').run(id, title);
+  db.prepare('INSERT INTO novels (id, title, owner) VALUES (?, ?, ?)').run(id, title, owner);
   return id;
 }
 
-export function listNovels(): { id: string; title: string; chunkCount: number }[] {
+/** 游客只见公开演示库；管理员见全部 */
+export function listNovels(viewer: 'admin' | 'guest'): { id: string; title: string; owner: string; chunkCount: number }[] {
+  const where = viewer === 'guest' ? "WHERE n.owner = 'public'" : '';
   return db.prepare(`
-    SELECT n.id, n.title, COUNT(c.id) as chunkCount
+    SELECT n.id, n.title, n.owner, COUNT(c.id) as chunkCount
     FROM novels n LEFT JOIN chunks c ON c.novel_id = n.id
+    ${where}
     GROUP BY n.id ORDER BY n.created_at DESC
   `).all() as any;
 }
@@ -62,9 +73,9 @@ export function insertChunks(novelId: string, chunks: { chapter: string; index: 
   }
 }
 
-export function getNovelByTitle(title: string): { id: string; title: string } | undefined {
-  return db.prepare('SELECT id, title FROM novels WHERE title = ?').get(title) as
-    | { id: string; title: string }
+export function getNovelByTitle(title: string): { id: string; title: string; owner: string } | undefined {
+  return db.prepare('SELECT id, title, owner FROM novels WHERE title = ?').get(title) as
+    | { id: string; title: string; owner: string }
     | undefined;
 }
 
@@ -75,12 +86,13 @@ export interface RetrievedChunk {
   similarity: number;
 }
 
-/** 语义检索：余弦相似度暴力扫描，返回 topK；可按小说过滤 */
-export function searchNovelChunks(queryVector: number[], topK = 3, novelId?: string): RetrievedChunk[] {
+/** 语义检索：余弦相似度暴力扫描，返回 topK；可按小说过滤；publicOnly 时只扫公开演示库 */
+export function searchNovelChunks(queryVector: number[], topK = 3, novelId?: string, publicOnly?: boolean): RetrievedChunk[] {
+  const publicFilter = publicOnly ? "AND n.owner = 'public'" : '';
   const rows = (
     novelId
-      ? db.prepare('SELECT c.chapter, c.text, c.vector, n.title as novelTitle FROM chunks c JOIN novels n ON n.id = c.novel_id WHERE c.novel_id = ?').all(novelId)
-      : db.prepare('SELECT c.chapter, c.text, c.vector, n.title as novelTitle FROM chunks c JOIN novels n ON n.id = c.novel_id').all()
+      ? db.prepare(`SELECT c.chapter, c.text, c.vector, n.title as novelTitle FROM chunks c JOIN novels n ON n.id = c.novel_id WHERE c.novel_id = ? ${publicFilter}`).all(novelId)
+      : db.prepare(`SELECT c.chapter, c.text, c.vector, n.title as novelTitle FROM chunks c JOIN novels n ON n.id = c.novel_id WHERE 1=1 ${publicFilter}`).all()
   ) as { chapter: string; text: string; vector: string; novelTitle: string }[];
   return rows
     .map((r) => ({

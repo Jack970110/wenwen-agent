@@ -2,6 +2,7 @@
 import { onMounted, ref } from 'vue';
 import { useSessionStore } from '../stores/sessions';
 import { useNovelStore } from '../stores/novels';
+import { fetchMe, isAdmin, logout, username } from '../stores/me';
 import NovelUploadModal from './NovelUploadModal.vue';
 
 const sessionStore = useSessionStore();
@@ -37,20 +38,47 @@ onMounted(() => novelStore.refresh());
       </div>
       <div v-if="!sessionStore.list.length" class="empty">暂无对话</div>
 
-      <!-- 小说库：RAG 数据源管理 -->
+      <!-- 小说库：游客只读公开演示库；管理员可上传/删除 -->
       <div class="section-label novel-label">
-        小说库
-        <button class="add" title="上传小说" @click="uploadOpen = true">＋</button>
+        {{ isAdmin ? '小说库' : '演示小说库' }}
+        <button v-if="isAdmin" class="add" title="上传小说" @click="uploadOpen = true">＋</button>
       </div>
       <div v-for="n in novelStore.list" :key="n.id" class="session-item novel">
         <span class="title">📖 {{ n.title }} <i>{{ n.chunkCount }}块</i></span>
-        <button class="del" title="删除小说" @click.stop="novelStore.remove(n.id)">✕</button>
+        <button v-if="isAdmin" class="del" title="删除小说" @click.stop="novelStore.remove(n.id)">✕</button>
       </div>
+      <div v-if="!isAdmin" class="empty guest-tip">体验版仅含演示小说</div>
+    </div>
+
+    <!-- 身份区：游客给管理员登录入口；管理员显示身份和退出 -->
+    <div class="identity">
+      <template v-if="isAdmin">
+        <span class="badge admin">👑 {{ username || '管理员' }}</span>
+        <button class="logout" @click="logout()">退出</button>
+      </template>
+      <template v-else>
+        <span class="badge guest">👤 游客模式</span>
+        <a class="login-link" href="/login">管理员登录</a>
+      </template>
     </div>
 
     <NovelUploadModal :open="uploadOpen" @close="uploadOpen = false" />
   </aside>
 </template>
+
+<style scoped>
+.identity {
+  margin: 0 12px 12px; padding: 10px 12px;
+  background: var(--panel2); border: 1px solid var(--border); border-radius: 9px;
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+}
+.badge { font-size: 12px; color: var(--dim); }
+.badge.admin { color: var(--accent2); }
+.logout, .login-link {
+  font-size: 12px; color: var(--accent); text-decoration: none;
+  background: transparent; border: none; cursor: pointer; padding: 0;
+}
+.logout:hover, .login-link:hover { text-decoration: underline; }
 
 <style scoped>
 .novel-label { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; }

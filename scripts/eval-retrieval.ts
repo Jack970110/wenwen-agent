@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { retrieve } from './rag/retrieve.js';
+import { retrieve } from '../src/rag/retrieve.js';
 import 'dotenv/config';
 
 /**

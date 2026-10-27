@@ -7,11 +7,12 @@ import { serveStatic } from '@hono/node-server/serve-static';
 import { type ModelMessage, streamText } from 'ai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { runAgent } from './agent.js';
-import { appendMessage, createSession, deleteSession, getMessages, listSessions, sessionExists, type StoredMessage } from './db.js';
+import { appendMessage, checkChatLimits, createSession, deleteSession, getMessages, listSessions, sessionExists, type StoredMessage } from './db.js';
 import { chunkNovel } from './rag/chunker.js';
 import { listNovels, deleteNovel, getNovelByTitle } from './rag/store.js';
 import { getJob, startIngestJob } from './rag/ingestJob.js';
-import { checkPassword, getAuthPassword, makeToken, verifyToken } from './auth.js';
+import { ragScope } from './rag/context.js';
+import { checkPassword, getAdminUsers, makeToken, verifyToken, authEnabled } from './auth.js';
 
 /** 深度模型直连（两阶段模式的阶段 2 用） */
 const zhipuDeep = createOpenAICompatible({
@@ -33,22 +34,33 @@ const zhipuDeep = createOpenAICompatible({
  */
 const app = new Hono();
 
+/** 身份解析：admin = 有效密码 cookie；guest = 匿名 visitorId cookie（首次访问自动种） */
+app.use('*', async (c: Context, next) => {
+  let visitorId = getCookie(c, 'visitor');
+  if (!visitorId) {
+    visitorId = crypto.randomUUID();
+    setCookie(c, 'visitor', visitorId, { path: '/', maxAge: 60 * 60 * 24 * 365, sameSite: 'Lax' });
+  }
+  c.set('visitorId', visitorId);
+  c.set('isAdmin', !!verifyToken(getCookie(c, 'auth')));
+  await next();
+});
+
 /**
  * 访问密码鉴权（未配置 ACCESS_PASSWORD 时全部跳过）：
- * - /api/* 未带有效 cookie → 401（前端收到后跳登录页）
- * - 页面/静态资源未带有效 cookie → 302 到 /login
- * - 登录页与登录接口本身豁免
+ * 分级权限——游客免登录可对话/管理自己的会话/读公开演示库；
+ * 小说上传删除等管理操作需管理员 cookie。
+ * 页面本身对游客开放（体验零门槛），登录页 /login 供管理员使用。
  */
-if (getAuthPassword()) {
+if (authEnabled()) {
   app.use('/api/*', async (c: Context, next) => {
-    if (c.req.path === '/api/login') return next();
-    if (verifyToken(getCookie(c, 'auth'))) return next();
-    return c.json({ error: '未登录或登录已过期', needLogin: true }, 401);
-  });
-  app.use('*', async (c: Context, next) => {
-    if (c.req.path === '/login' || c.req.path === '/api/login') return next();
-    if (verifyToken(getCookie(c, 'auth'))) return next();
-    return c.redirect('/login');
+    if (c.req.path === '/api/login' || c.req.path === '/api/me') return next();
+    if (c.get('isAdmin')) return next();
+    // 游客可用：对话、会话（隔离到访客）、公开小说库读取；管理操作 401
+    const guestAllowed = ['/api/chat', '/api/sessions', '/api/novels'].some((p) => c.req.path.startsWith(p))
+      && !(c.req.method !== 'GET' && c.req.path.startsWith('/api/novels'));
+    if (guestAllowed) return next();
+    return c.json({ error: '需要管理员权限', needLogin: true }, 401);
   });
 }
 
@@ -62,37 +74,52 @@ font-family:-apple-system,"PingFang SC",sans-serif}
 .card{width:340px;background:#171a23;border:1px solid #2a2f3f;border-radius:14px;padding:28px}
 h1{font-size:17px;margin:0 0 6px}p{font-size:12px;color:#8b93a7;margin:0 0 18px}
 input{width:100%;box-sizing:border-box;background:#0f1117;border:1px solid #2a2f3f;border-radius:8px;
-padding:10px 12px;color:#e4e7ef;font:inherit;outline:none}
+padding:10px 12px;color:#e4e7ef;font:inherit;outline:none;margin-bottom:10px}
 input:focus{border-color:#6c8cff}
 button{width:100%;margin-top:14px;padding:10px;border:none;border-radius:8px;cursor:pointer;color:#fff;
 background:linear-gradient(135deg,#6c8cff,#8b6cff);font-size:14px}
 .err{color:#f87171;font-size:12px;margin-top:10px;min-height:16px}
 </style></head><body><div class="card">
-<h1>问问 Agent</h1><p>私有部署站点，请输入访问密码</p>
-<input type="password" id="pw" placeholder="访问密码" autofocus>
+<h1>问问 Agent</h1><p>私有部署站点，管理员登录</p>
+<input type="text" id="user" placeholder="用户名" autofocus>
+<input type="password" id="pw" placeholder="密码">
 <div class="err" id="err"></div>
 <button onclick="login()">进入</button>
 </div><script>
 async function login(){
-  const pw=document.getElementById('pw').value;
-  const r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:pw})});
-  if(r.ok){location.href='/'}else{document.getElementById('err').textContent='密码错误'}
+  const u=document.getElementById('user').value.trim(), p=document.getElementById('pw').value;
+  const r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p})});
+  if(r.ok){location.href='/'}else{document.getElementById('err').textContent='用户名或密码错误'}
 }
-document.getElementById('pw').addEventListener('keydown',e=>{if(e.key==='Enter')login()});
+for(const id of ['user','pw'])document.getElementById(id).addEventListener('keydown',e=>{if(e.key==='Enter')login()});
 </script></body></html>`),
 );
 
 app.post('/api/login', async (c: Context) => {
-  const { password } = (await c.req.json()) as { password?: string };
-  if (!checkPassword(password ?? '')) return c.json({ error: '密码错误' }, 401);
-  const pw = getAuthPassword();
-  setCookie(c, 'auth', makeToken(pw ?? ''), {
+  const { username, password } = (await c.req.json()) as { username?: string; password?: string };
+  if (!username?.trim() || !checkPassword(username.trim(), password ?? '')) {
+    return c.json({ error: '用户名或密码错误' }, 401);
+  }
+  setCookie(c, 'auth', makeToken(username.trim()), {
     httpOnly: true, sameSite: 'Lax', path: '/', maxAge: 60 * 60 * 24 * 30, // 30 天
   });
+  return c.json({ ok: true, username: username.trim() });
+});
+
+// httpOnly cookie 只能由服务端清除
+app.post('/api/logout', (c: Context) => {
+  setCookie(c, 'auth', '', { httpOnly: true, sameSite: 'Lax', path: '/', maxAge: 0 });
   return c.json({ ok: true });
 });
 
+app.get('/api/me', (c: Context) => c.json({ admin: c.get('isAdmin') as boolean, username: verifyToken(getCookie(c, 'auth')) }));
+
 app.post('/api/chat', async (c: Context) => {
+  // 防薅：全站日限额 + 单 IP 限频（游客和管理员都受限，额度是站点级成本护栏）
+  const ip = c.req.header('x-forwarded-for')?.split(',')[0].trim() || 'local';
+  const limit = checkChatLimits(ip);
+  if (!limit.allowed) return c.json({ error: limit.reason }, 429);
+
   const { sessionId, message, novelTitle, deep } = (await c.req.json()) as {
     sessionId: string;
     message: string;
@@ -102,19 +129,23 @@ app.post('/api/chat', async (c: Context) => {
   if (!sessionId || !message?.trim()) {
     return c.json({ error: 'sessionId 和 message 必填' }, 400);
   }
-  if (!sessionExists(sessionId)) {
+  // 会话按身份隔离：游客用 visitorId，管理员用 'admin'
+  const visitorId = c.get('visitorId') as string;
+  const owner = c.get('isAdmin') ? 'admin' : visitorId;
+  if (!sessionExists(sessionId, owner)) {
     return c.json({ error: '会话不存在' }, 404);
   }
-  // 前端选择器传入的聚焦小说：不存在时忽略（退化为全库检索），不阻塞对话
-  const focus = novelTitle && getNovelByTitle(novelTitle) ? novelTitle : undefined;
+  // 前端选择器传入的聚焦小说：游客只能聚焦公开演示库；不存在时忽略（退化为全库检索）
+  const focusNovel = novelTitle && getNovelByTitle(novelTitle) ? novelTitle : undefined;
+  const focus = c.get('isAdmin') ? focusNovel : (getNovelByTitle(focusNovel ?? '')?.owner === 'public' ? focusNovel : undefined);
 
   const userMsg: StoredMessage = {
     id: crypto.randomUUID(),
     role: 'user',
     parts: [{ type: 'text', text: message.trim() }],
   };
-  appendMessage(sessionId, userMsg);
-  const rawHistory = getMessages(sessionId);
+  appendMessage(sessionId, owner, userMsg);
+  const rawHistory = getMessages(sessionId, owner);
 
   // 历史卫生：正常序列必须 user/assistant 交替。
   // 回答被停止或失败时会留下"悬空提问"（连续两条 user），小模型会被带偏。
@@ -126,13 +157,24 @@ app.post('/api/chat', async (c: Context) => {
     }
     history.push(m);
   }
+
+  // 滑窗截断：上下文窗口有限（glm-4-flash 128K），单会话聊太长会直接超限报错。
+  // 只保留最近 MAX_CONTEXT_MESSAGES 条；截断后首条若是 assistant（对话 API 要求
+  // 首条为 user）则继续丢弃，保证序列合法。历史消息不会丢——库里还有完整版。
+  const MAX_CONTEXT_MESSAGES = 20;
+  let context = history.slice(-MAX_CONTEXT_MESSAGES);
+  while (context.length && context[0].role !== 'user') context = context.slice(1);
+
   // 防御：任何情况下发给模型的消息都不能为空
-  if (history.length === 0) history.push(userMsg);
+  if (context.length === 0) context = [userMsg];
 
   // 客户端断开（关页面/点停止）→ abortController 触发 → streamText 取消上游请求
   // 不取消的话模型会继续生成，token 照烧
   const abortController = new AbortController();
   c.req.raw.signal.addEventListener('abort', () => abortController.abort());
+
+  // 游客的检索边界：只扫公开演示库（通过 ALS 透传到工具执行层）
+  const onlyPublic = !c.get('isAdmin');
 
   return streamSSE(c, async (stream) => {
     let assistantText = '';
@@ -141,14 +183,15 @@ app.post('/api/chat', async (c: Context) => {
     let errored = false;
     try {
       // 存储消息转模型消息：只保留 text part（工具记录是给人看的，不进模型上下文）
-      const modelInput = history.map((m) => ({
+      const modelInput = context.map((m) => ({
         role: m.role,
         content: m.parts.filter((p: StoredMessage['parts'][number]) => p.type === 'text').map((p) => p.text).join(''),
       }));
 
       const sendEvent = (evt: Record<string, unknown>) => stream.writeSSE({ data: JSON.stringify(evt) });
 
-      if (deep) {
+      await ragScope.run({ onlyPublic }, async () => {
+        if (deep) {
         /**
          * 两阶段深度模式（绕过智谱 Z1 流式工具调用的接口缺陷）：
          * 阶段 1：快模型跑 Agent loop 完成工具调用/检索（此链路稳定），收集检索结果
@@ -219,8 +262,9 @@ app.post('/api/chat', async (c: Context) => {
           }
         }
       }
+      }); // ragScope.run：工具执行层的检索边界只在请求作用域内生效
 
-      appendMessage(sessionId, {
+      appendMessage(sessionId, owner, {
         id: crypto.randomUUID(),
         role: 'assistant',
         parts: [
@@ -233,7 +277,7 @@ app.post('/api/chat', async (c: Context) => {
       // 客户端主动断开不算错误，静默结束即可
       if (abortController.signal.aborted) {
         // 即使没有生成任何文字也要落库占位，否则历史里会留下悬空提问污染后续对话
-        appendMessage(sessionId, {
+        appendMessage(sessionId, owner, {
           id: crypto.randomUUID(),
           role: 'assistant',
           parts: [
@@ -252,7 +296,7 @@ app.post('/api/chat', async (c: Context) => {
           ? '免费模型当前限流（高峰期访问量大），请稍等几秒重试'
           : `请求失败: ${msg.slice(0, 200)}`;
       // 失败同样落库占位，保持 user/assistant 交替
-      appendMessage(sessionId, {
+      appendMessage(sessionId, owner, {
         id: crypto.randomUUID(),
         role: 'assistant',
         parts: [{ type: 'text', text: `（生成失败：${friendly}）` }],
@@ -264,22 +308,36 @@ app.post('/api/chat', async (c: Context) => {
   });
 });
 
-app.get('/api/sessions', (c: Context) => c.json(listSessions()));
+app.get('/api/sessions', (c: Context) => {
+  const owner = c.get('isAdmin') ? 'admin' : (c.get('visitorId') as string);
+  return c.json(listSessions(owner));
+});
 
-app.get('/api/sessions/:id/messages', (c: Context) =>
-  c.json(getMessages(c.req.param('id') as string)),
-);
+app.get('/api/sessions/:id/messages', (c: Context) => {
+  const owner = c.get('isAdmin') ? 'admin' : (c.get('visitorId') as string);
+  return c.json(getMessages(c.req.param('id') as string, owner));
+});
 
-app.post('/api/sessions', (c: Context) => c.json({ sessionId: createSession() }));
+app.post('/api/sessions', (c: Context) => {
+  const owner = c.get('isAdmin') ? 'admin' : (c.get('visitorId') as string);
+  return c.json({ sessionId: createSession(owner) });
+});
 
-app.delete('/api/sessions/:id', (c: Context) =>
-  c.json({ ok: deleteSession(c.req.param('id') as string) }),
-);
+app.delete('/api/sessions/:id', (c: Context) => {
+  const owner = c.get('isAdmin') ? 'admin' : (c.get('visitorId') as string);
+  return c.json({ ok: deleteSession(c.req.param('id') as string, owner) });
+});
 
-/** 小说库：列表 / 上传入库 / 删除 */
-app.get('/api/novels', (c: Context) => c.json(listNovels()));
+app.get('/api/sessions', (c: Context) => {
+  const owner = c.get('isAdmin') ? 'admin' : (c.get('visitorId') as string);
+  return c.json(listSessions(owner));
+});
+
+/** 小说库：游客读公开演示库；上传/删除是管理员操作 */
+app.get('/api/novels', (c: Context) => c.json(listNovels(c.get('isAdmin') ? 'admin' : 'guest')));
 
 app.post('/api/novels', async (c: Context) => {
+  if (!c.get('isAdmin')) return c.json({ error: '需要管理员权限', needLogin: true }, 401);
   const body = await c.req.parseBody();
   const file = body.file as File | undefined;
   const title = String(body.title ?? '').trim();
@@ -305,9 +363,10 @@ app.get('/api/novels/jobs/:id', (c: Context) => {
   return c.json(job);
 });
 
-app.delete('/api/novels/:id', (c: Context) =>
-  c.json({ ok: deleteNovel(c.req.param('id') as string) }),
-);
+app.delete('/api/novels/:id', (c: Context) => {
+  if (!c.get('isAdmin')) return c.json({ error: '需要管理员权限', needLogin: true }, 401);
+  return c.json({ ok: deleteNovel(c.req.param('id') as string) });
+});
 
 // 静态托管前端构建产物（必须放在 API 路由之后）
 app.use('*', serveStatic({ root: './frontend/dist' }));

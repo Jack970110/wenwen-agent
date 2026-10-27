@@ -35,7 +35,7 @@ async function main() {
   const novelId = createNovel(title);
   insertChunks(novelId, withVectors);
   console.log(`✅ 入库完成，novelId=${novelId}`);
-  console.log('已有小说:', listNovels().map((n: any) => `${n.title}(${n.chunkCount}块)`).join(', '));
+  console.log('已有小说:', listNovels('admin').map((n: any) => `${n.title}(${n.chunkCount}块)`).join(', '));
 }
 
 main().catch((err) => {

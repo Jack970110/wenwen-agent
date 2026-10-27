@@ -13,10 +13,10 @@
     "build": "npm run build -w frontend",
     "check": "npm run check --workspaces --if-present && tsc --noEmit",
     "mcp:http": "tsx src/mcp-http-server.ts",
-    "test:mcp": "tsx src/test-mcp.ts",
-    "test:mcp:http": "tsx src/test-mcp-http.ts",
+    "test:mcp": "tsx scripts/test-mcp.ts",
+    "test:mcp:http": "tsx scripts/test-mcp-http.ts",
     "ingest": "tsx src/ingest.ts",
-    "eval": "tsx src/eval-retrieval.ts",
+    "eval": "tsx scripts/eval-retrieval.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

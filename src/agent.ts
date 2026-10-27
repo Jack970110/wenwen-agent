@@ -22,7 +22,7 @@ const zhipu = createOpenAICompatible({
  * 动态部分：已入库小说清单（让模型知道可检索什么）+ 聚焦小说（前端选择器传入）。
  */
 function buildSystemPrompt(focusTitle?: string): string {
-  const novels = listNovels();
+  const novels = listNovels('admin');
   const novelList = novels.length
     ? novels.map((n) => `《${n.title}》`).join('、')
     : '（暂无）';

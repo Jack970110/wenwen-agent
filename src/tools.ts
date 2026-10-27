@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { queryChaptersData, analyzeTrendData, saveReportData } from './dataService.js';
 import { getNovelByTitle, listNovels } from './rag/store.js';
 import { retrieve } from './rag/retrieve.js';
+import { ragScope } from './rag/context.js';
 
 /**
  * 工具（Function Calling）是 Agent 的"手"：
@@ -58,11 +59,14 @@ export const searchNovel = tool({
     topK: z.number().int().min(1).max(10).optional().describe('返回片段数，默认 3'),
   }),
   execute: async ({ query, novelTitle, topK }) => {
-    // 按书名解析 novelId：书名不存在时明确报错，防止模型幻觉出书名后静默全库检索
+    const onlyPublic = ragScope.getStore()?.onlyPublic;
+    // 按书名解析 novelId：书名不存在/无权访问时明确报错，防止模型幻觉出书名后静默全库检索
     let novelId: string | undefined;
     if (novelTitle) {
       const novel = getNovelByTitle(novelTitle);
-      if (!novel) return { message: `书库中没有《${novelTitle}》这本小说`, available: listNovels().map((n) => n.title) };
+      if (!novel || (onlyPublic && novel.owner !== 'public')) {
+        return { message: `书库中没有《${novelTitle}》这本小说`, available: listNovels(onlyPublic ? 'guest' : 'admin').map((n) => n.title) };
+      }
       novelId = novel.id;
     }
     const results = await retrieve(query, topK ?? 3, novelId);
