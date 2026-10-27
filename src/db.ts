@@ -1,4 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
+import { mkdirSync } from 'node:fs';
 
 /**
  * 存储层自定义消息类型：不直接用 AI SDK 的 UIMessage，
@@ -23,8 +24,11 @@ export interface StoredMessage {
  * 会话持久化：SQLite（Node 22 内置 node:sqlite，无需额外依赖）。
  * 简化设计：messages 整体存 JSON 文本，会话级别读写。
  * 生产环境可换成逐条消息表 + Redis 缓存，接口不变。
+ *
+ * db 文件放 data/ 目录：Docker 数据卷挂载点（容器重建不丢数据）。
  */
-const db = new DatabaseSync('data.db');
+mkdirSync('data', { recursive: true });
+const db = new DatabaseSync('data/data.db');
 db.exec(`
   CREATE TABLE IF NOT EXISTS sessions (
     id TEXT PRIMARY KEY,

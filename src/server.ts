@@ -2,6 +2,7 @@ import 'dotenv/config';
 import { serve } from '@hono/node-server';
 import { Hono, type Context } from 'hono';
 import { streamSSE } from 'hono/streaming';
+import { setCookie, getCookie } from 'hono/cookie';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { type ModelMessage, streamText } from 'ai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
@@ -10,6 +11,7 @@ import { appendMessage, createSession, deleteSession, getMessages, listSessions,
 import { chunkNovel } from './rag/chunker.js';
 import { listNovels, deleteNovel, getNovelByTitle } from './rag/store.js';
 import { getJob, startIngestJob } from './rag/ingestJob.js';
+import { checkPassword, getAuthPassword, makeToken, verifyToken } from './auth.js';
 
 /** 深度模型直连（两阶段模式的阶段 2 用） */
 const zhipuDeep = createOpenAICompatible({
@@ -30,6 +32,65 @@ const zhipuDeep = createOpenAICompatible({
  * 前端据此分别渲染"工具调用时间线"和"正文流"。
  */
 const app = new Hono();
+
+/**
+ * 访问密码鉴权（未配置 ACCESS_PASSWORD 时全部跳过）：
+ * - /api/* 未带有效 cookie → 401（前端收到后跳登录页）
+ * - 页面/静态资源未带有效 cookie → 302 到 /login
+ * - 登录页与登录接口本身豁免
+ */
+if (getAuthPassword()) {
+  app.use('/api/*', async (c: Context, next) => {
+    if (c.req.path === '/api/login') return next();
+    if (verifyToken(getCookie(c, 'auth'))) return next();
+    return c.json({ error: '未登录或登录已过期', needLogin: true }, 401);
+  });
+  app.use('*', async (c: Context, next) => {
+    if (c.req.path === '/login' || c.req.path === '/api/login') return next();
+    if (verifyToken(getCookie(c, 'auth'))) return next();
+    return c.redirect('/login');
+  });
+}
+
+// 登录页（自包含单文件，无外部资源依赖）
+app.get('/login', (c: Context) =>
+  c.html(`<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>登录 · 问问 Agent</title><style>
+body{margin:0;height:100vh;display:flex;align-items:center;justify-content:center;background:#0f1117;color:#e4e7ef;
+font-family:-apple-system,"PingFang SC",sans-serif}
+.card{width:340px;background:#171a23;border:1px solid #2a2f3f;border-radius:14px;padding:28px}
+h1{font-size:17px;margin:0 0 6px}p{font-size:12px;color:#8b93a7;margin:0 0 18px}
+input{width:100%;box-sizing:border-box;background:#0f1117;border:1px solid #2a2f3f;border-radius:8px;
+padding:10px 12px;color:#e4e7ef;font:inherit;outline:none}
+input:focus{border-color:#6c8cff}
+button{width:100%;margin-top:14px;padding:10px;border:none;border-radius:8px;cursor:pointer;color:#fff;
+background:linear-gradient(135deg,#6c8cff,#8b6cff);font-size:14px}
+.err{color:#f87171;font-size:12px;margin-top:10px;min-height:16px}
+</style></head><body><div class="card">
+<h1>问问 Agent</h1><p>私有部署站点，请输入访问密码</p>
+<input type="password" id="pw" placeholder="访问密码" autofocus>
+<div class="err" id="err"></div>
+<button onclick="login()">进入</button>
+</div><script>
+async function login(){
+  const pw=document.getElementById('pw').value;
+  const r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:pw})});
+  if(r.ok){location.href='/'}else{document.getElementById('err').textContent='密码错误'}
+}
+document.getElementById('pw').addEventListener('keydown',e=>{if(e.key==='Enter')login()});
+</script></body></html>`),
+);
+
+app.post('/api/login', async (c: Context) => {
+  const { password } = (await c.req.json()) as { password?: string };
+  if (!checkPassword(password ?? '')) return c.json({ error: '密码错误' }, 401);
+  const pw = getAuthPassword();
+  setCookie(c, 'auth', makeToken(pw ?? ''), {
+    httpOnly: true, sameSite: 'Lax', path: '/', maxAge: 60 * 60 * 24 * 30, // 30 天
+  });
+  return c.json({ ok: true });
+});
 
 app.post('/api/chat', async (c: Context) => {
   const { sessionId, message, novelTitle, deep } = (await c.req.json()) as {

@@ -59,6 +59,7 @@ export function useChatStream(sessionId: Ref<string>) {
         }),
         signal: abortCtrl.signal,
       });
+      if (res.status === 401) { location.href = '/login'; return; }
       if (!res.ok || !res.body) {
         const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
         throw new Error((err as any).error || `HTTP ${res.status}`);

@@ -1,0 +1,13 @@
+services:
+  wenwen:
+    build: .
+    ports:
+      - "3001:3001"
+    # 数据持久化：容器重建/升级镜像，会话和小说向量不丢
+    volumes:
+      - ./data:/app/data
+    env_file:
+      - .env
+    environment:
+      - PORT=3001
+    restart: unless-stopped

@@ -9,7 +9,10 @@ import { cosineSimilarity } from './embed.js';
  * 这个"什么时候才需要向量数据库"的判断本身就是面试考点。
  */
 
-const db = new DatabaseSync('data.db');
+// 与 db.ts 相同的 data/ 目录（Docker 数据卷挂载点）
+import { mkdirSync } from 'node:fs';
+mkdirSync('data', { recursive: true });
+const db = new DatabaseSync('data/data.db');
 db.exec(`
   CREATE TABLE IF NOT EXISTS novels (
     id TEXT PRIMARY KEY,

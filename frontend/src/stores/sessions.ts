@@ -12,7 +12,9 @@ export const useSessionStore = defineStore('sessions', () => {
   const currentId = ref('');
 
   async function refresh() {
-    list.value = await (await fetch('/api/sessions')).json();
+    const res = await fetch('/api/sessions');
+    if (res.status === 401) { location.href = '/login'; return; }
+    list.value = await res.json();
   }
 
   async function create(): Promise<string> {
