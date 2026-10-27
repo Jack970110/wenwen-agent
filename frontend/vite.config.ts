@@ -6,7 +6,11 @@ export default defineConfig({
   server: {
     port: 5173,
     // 开发期代理到后端，生产由 Hono 直接托管构建产物，同源无 CORS
-    proxy: { '/api': 'http://localhost:3001' },
+    proxy: {
+      '/api': 'http://localhost:3001',
+      // 登录页在后端（鉴权启用时），开发模式也要能到达
+      '/login': 'http://localhost:3001',
+    },
   },
   build: { outDir: 'dist' },
 });
