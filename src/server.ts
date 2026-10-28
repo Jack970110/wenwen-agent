@@ -205,7 +205,9 @@ app.post('/api/chat', async (c: Context) => {
             toolEvents.push({ name: part.toolName, args: JSON.stringify(part.input) });
             await sendEvent({ type: 'tool-call', toolName: part.toolName, args: part.input });
           } else if (part.type === 'tool-error') {
-            toolEvents.push({ name: part.toolName, args: String(part.input ?? ''), error: true });
+            // 工具失败必须落日志：以前静默只推前端，线上排查无门
+            console.error(`[tool-error] ${part.toolName}: ${String(part.error).slice(0, 300)}`);
+            toolEvents.push({ name: part.toolName, args: JSON.stringify(part.input ?? ''), error: true });
             await sendEvent({ type: 'tool-error', toolName: part.toolName, error: String(part.error) });
           } else if (part.type === 'tool-result') {
             toolResults.push({ name: part.toolName, output: JSON.stringify(part.output).slice(0, 6000) });
@@ -254,7 +256,9 @@ app.post('/api/chat', async (c: Context) => {
             toolEvents.push({ name: part.toolName, args: JSON.stringify(part.input) });
             await sendEvent({ type: 'tool-call', toolName: part.toolName, args: part.input });
           } else if (part.type === 'tool-error') {
-            toolEvents.push({ name: part.toolName, args: String(part.input ?? ''), error: true });
+            // 工具失败必须落日志：以前静默只推前端，线上排查无门
+            console.error(`[tool-error] ${part.toolName}: ${String(part.error).slice(0, 300)}`);
+            toolEvents.push({ name: part.toolName, args: JSON.stringify(part.input ?? ''), error: true });
             await sendEvent({ type: 'tool-error', toolName: part.toolName, error: String(part.error) });
           } else if (part.type === 'text-delta') {
             assistantText += part.text;
