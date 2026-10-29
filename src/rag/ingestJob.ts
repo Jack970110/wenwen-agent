@@ -1,6 +1,6 @@
-import { chunkNovel } from './chunker.js';
+import { chunkNovel, type NovelChunk } from './chunker.js';
 import { embed } from './embed.js';
-import { createNovel, deleteNovel, insertChunks } from './store.js';
+import { createNovel, deleteNovel, insertChunks, saveNovelMetaFromChunks } from './store.js';
 
 /**
  * 异步入库任务队列（进程内实现）。
@@ -45,7 +45,7 @@ async function runJob(job: IngestJob, rawText: string) {
 
     // 批量向量化，每批完成更新进度
     const BATCH = 16;
-    const withVectors: { chapter: string; index: number; text: string; vector: number[] }[] = [];
+    const withVectors: (NovelChunk & { vector: number[] })[] = [];
     for (let i = 0; i < chunks.length; i += BATCH) {
       const batch = chunks.slice(i, i + BATCH);
       const vectors = await embed(batch.map((b) => b.text));
@@ -54,6 +54,8 @@ async function runJob(job: IngestJob, rawText: string) {
     }
 
     insertChunks(novelId, withVectors);
+    saveNovelMetaFromChunks(novelId, chunks);
+
     job.status = 'done';
   } catch (err) {
     // 失败回滚：不留半截数据

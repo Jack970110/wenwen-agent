@@ -1,7 +1,7 @@
 import { tool } from 'ai';
 import { z } from 'zod';
 import { queryChaptersData, analyzeTrendData, saveReportData } from './dataService.js';
-import { getNovelByTitle, listNovels } from './rag/store.js';
+import { getNovelByTitle, getNovelMeta, listNovels } from './rag/store.js';
 import { retrieve } from './rag/retrieve.js';
 import { ragScope } from './rag/context.js';
 
@@ -74,4 +74,28 @@ export const searchNovel = tool({
   },
 });
 
-export const allTools = { queryChapters, analyzeTrend, generateReport, searchNovel };
+/** 工具 5：小说结构信息——统计类问题的数据源（多少章/多少字/章节列表） */
+export const getNovelInfo = tool({
+  description: '返回小说的结构元数据：总章节数（全局计数，每卷重置编号也会正确统计）、总字数、完整章节列表（含全局序号和原文标注）。统计类问题（多少章/多少字/全书结构）必须调用此工具，不要用检索结果拼凑。',
+  inputSchema: z.object({
+    novelTitle: z.string().describe('小说名'),
+  }),
+  execute: async ({ novelTitle }) => {
+    const onlyPublic = ragScope.getStore()?.onlyPublic;
+    const novel = getNovelByTitle(novelTitle);
+    if (!novel || (onlyPublic && novel.owner !== 'public')) {
+      return { message: `书库中没有《${novelTitle}》这本小说`, available: listNovels(onlyPublic ? 'guest' : 'admin').map((n) => n.title) };
+    }
+    const meta = getNovelMeta(novel.id);
+    if (!meta) return { message: `《${novelTitle}》暂无结构信息（可能入库时未生成）` };
+    return {
+      title: novel.title,
+      totalChapters: meta.totalChapters,
+      totalChars: meta.totalChars,
+      chapterList: meta.chapterList,
+      note: 'totalChapters 为全局计数；如原文按卷重置编号，以全局计数为准',
+    };
+  },
+});
+
+export const allTools = { queryChapters, analyzeTrend, generateReport, searchNovel, getNovelInfo };

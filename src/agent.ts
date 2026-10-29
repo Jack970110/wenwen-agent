@@ -24,7 +24,16 @@ const zhipu = createOpenAICompatible({
 function buildSystemPrompt(focusTitle?: string): string {
   const novels = listNovels('admin');
   const novelList = novels.length
-    ? novels.map((n) => `《${n.title}》`).join('、')
+    ? novels
+        .map((n: any) => {
+          let scale = '';
+          try {
+            const meta = n.meta ? JSON.parse(n.meta) : null;
+            if (meta?.totalChapters) scale = `（${meta.totalChapters}章/${Math.round(meta.totalChars / 10000)}万字）`;
+          } catch { /* meta 解析失败不影响列表 */ }
+          return `《${n.title}》${scale}`;
+        })
+        .join('、')
     : '（暂无）';
 
   const focusLine = focusTitle

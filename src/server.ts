@@ -9,7 +9,7 @@ import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { runAgent } from './agent.js';
 import { appendMessage, checkChatLimits, claimGuestSessions, cleanupStaleGuestSessions, createSession, deleteSession, getMessages, getSessionFocus, getSessionMeta, listSessions, sessionExists, setSessionFocus, type StoredMessage } from './db.js';
 import { chunkNovel } from './rag/chunker.js';
-import { listNovels, deleteNovel, getNovelByTitle } from './rag/store.js';
+import { listNovels, deleteNovel, getNovelByTitle, backfillAllMissingMeta } from './rag/store.js';
 import { getJob, startIngestJob } from './rag/ingestJob.js';
 import { ragScope } from './rag/context.js';
 import { checkPassword, getAdminUsers, makeToken, verifyToken, authEnabled } from './auth.js';
@@ -386,4 +386,7 @@ serve({ fetch: app.fetch, port }, (info) => {
   // TTL 成本治理：清理 7 天无活动的游客会话（管理员账号名下的不受影响）
   const removed = cleanupStaleGuestSessions(7, [...getAdminUsers().keys(), 'admin']);
   if (removed > 0) console.log(`[cleanup] 已清理 ${removed} 条过期游客会话`);
+  // 自愈：老版本入库的小说缺失结构元数据，从已有块回填（无需重新向量化）
+  const backfilled = backfillAllMissingMeta();
+  if (backfilled > 0) console.log(`[meta] 已回填 ${backfilled} 本小说的结构元数据`);
 });
