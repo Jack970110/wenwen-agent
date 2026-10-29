@@ -5,12 +5,9 @@ export default defineConfig({
   plugins: [vue()],
   server: {
     port: 5173,
-    // 开发期代理到后端，生产由 Hono 直接托管构建产物，同源无 CORS
-    proxy: {
-      '/api': 'http://localhost:3001',
-      // 登录页在后端（鉴权启用时），开发模式也要能到达
-      '/login': 'http://localhost:3001',
-    },
+    // 开发期代理到后端，生产由 Hono 直接托管构建产物，同源无 CORS。
+    // /login 是前端 SPA 视图（登录已迁入 Vue），Vite 对 html 请求自带回退，无需代理
+    proxy: { '/api': 'http://localhost:3001' },
   },
   build: { outDir: 'dist' },
 });

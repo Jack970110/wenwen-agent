@@ -52,6 +52,8 @@ db.exec(`
 `);
 // 老数据归属迁移：历史会话归管理员（novels 的 owner 列在 store.ts 里迁移）
 db.exec(`UPDATE sessions SET visitor_id = 'admin' WHERE visitor_id IS NULL`);
+// 会话级聚焦小说：null = 全库检索
+addColumnIfMissing('sessions', 'focus_novel', 'TEXT');
 
 /** 全站日限额 + 单 IP 限频：每次 /api/chat 调用前检查并计数 */
 export function checkChatLimits(ip: string): { allowed: boolean; reason?: string } {
@@ -83,6 +85,26 @@ export function createSession(visitorId: string): string {
   return id;
 }
 
+/** 会话元信息（含聚焦小说），用于前端选择器状态恢复 */
+export function getSessionMeta(sessionId: string, visitorId: string): { id: string; title: string; focusNovel: string | null } | undefined {
+  const row = db
+    .prepare('SELECT id, title, focus_novel as focusNovel FROM sessions WHERE id = ? AND visitor_id = ?')
+    .get(sessionId, visitorId) as { id: string; title: string; focusNovel: string | null } | undefined;
+  return row;
+}
+
+export function setSessionFocus(sessionId: string, visitorId: string, novelTitle: string | null): boolean {
+  const result = db.prepare('UPDATE sessions SET focus_novel = ? WHERE id = ? AND visitor_id = ?').run(novelTitle, sessionId, visitorId);
+  return Number(result.changes) > 0;
+}
+
+export function getSessionFocus(sessionId: string, visitorId: string): string | null {
+  const row = db.prepare('SELECT focus_novel FROM sessions WHERE id = ? AND visitor_id = ?').get(sessionId, visitorId) as
+    | { focus_novel: string | null }
+    | undefined;
+  return row?.focus_novel ?? null;
+}
+
 export function sessionExists(sessionId: string, visitorId: string): boolean {
   return !!db.prepare('SELECT 1 FROM sessions WHERE id = ? AND visitor_id = ?').get(sessionId, visitorId);
 }
@@ -112,13 +134,35 @@ export function appendMessage(sessionId: string, visitorId: string, message: Sto
   db.prepare('UPDATE sessions SET messages = ? WHERE id = ? AND visitor_id = ?').run(JSON.stringify(list), sessionId, visitorId);
 }
 
-export function listSessions(visitorId: string): { id: string; title: string; createdAt: string }[] {
+export function listSessions(visitorId: string): { id: string; title: string; focusNovel: string | null; createdAt: string }[] {
   return db
-    .prepare('SELECT id, title, created_at as createdAt FROM sessions WHERE visitor_id = ? ORDER BY created_at DESC LIMIT 50')
-    .all(visitorId) as { id: string; title: string; createdAt: string }[];
+    .prepare('SELECT id, title, focus_novel as focusNovel, created_at as createdAt FROM sessions WHERE visitor_id = ? ORDER BY created_at DESC LIMIT 50')
+    .all(visitorId) as { id: string; title: string; focusNovel: string | null; createdAt: string }[];
 }
 
 export function deleteSession(sessionId: string, visitorId: string): boolean {
   const result = db.prepare('DELETE FROM sessions WHERE id = ? AND visitor_id = ?').run(sessionId, visitorId);
   return result.changes > 0;
+}
+
+/**
+ * 登录收编（claim）：游客登录瞬间，把匿名身份下的会话迁移到正式账号名下。
+ * 这是「先体验后注册」转化漏斗的临门一脚——体验数据无缝继承，不用重新开始。
+ */
+export function claimGuestSessions(fromVisitorId: string, toOwner: string): number {
+  const result = db.prepare('UPDATE sessions SET visitor_id = ? WHERE visitor_id = ?').run(toOwner, fromVisitorId);
+  return Number(result.changes);
+}
+
+/**
+ * TTL 清理：删除超过 N 天的游客会话（管理员账号名下的不受影响）。
+ * 防止匿名数据无限膨胀——业界标准的成本治理手段。
+ * 服务启动时执行一次即可（服务会随部署频繁重启，等效定时任务）。
+ */
+export function cleanupStaleGuestSessions(days: number, protectedOwners: string[]): number {
+  const placeholders = protectedOwners.map(() => '?').join(',') || "''";
+  const result = db
+    .prepare(`DELETE FROM sessions WHERE visitor_id NOT IN (${placeholders}) AND created_at < datetime('now', '-' || ? || ' days')`)
+    .run(...protectedOwners, days);
+  return Number(result.changes);
 }

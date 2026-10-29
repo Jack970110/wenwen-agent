@@ -28,7 +28,7 @@ function buildSystemPrompt(focusTitle?: string): string {
     : '（暂无）';
 
   const focusLine = focusTitle
-    ? `\n本次对话用户已锁定聚焦小说：《${focusTitle}》——调用 searchNovel 时 novelTitle 固定传 "${focusTitle}"。`
+    ? `\n本次会话默认聚焦小说：《${focusTitle}》——涉及该书时 searchNovel 的 novelTitle 传 "${focusTitle}"。但用户明确提到其他书名时，以用户指定的书为准（novelTitle 传用户点名的书）；用户没有点名时，默认检索聚焦书。`
     : '';
 
   return `你是"问问"，一位小说分析与网文数据分析 Agent。

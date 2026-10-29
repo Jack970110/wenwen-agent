@@ -7,7 +7,7 @@ import { serveStatic } from '@hono/node-server/serve-static';
 import { type ModelMessage, streamText } from 'ai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { runAgent } from './agent.js';
-import { appendMessage, checkChatLimits, createSession, deleteSession, getMessages, listSessions, sessionExists, type StoredMessage } from './db.js';
+import { appendMessage, checkChatLimits, claimGuestSessions, cleanupStaleGuestSessions, createSession, deleteSession, getMessages, getSessionFocus, getSessionMeta, listSessions, sessionExists, setSessionFocus, type StoredMessage } from './db.js';
 import { chunkNovel } from './rag/chunker.js';
 import { listNovels, deleteNovel, getNovelByTitle } from './rag/store.js';
 import { getJob, startIngestJob } from './rag/ingestJob.js';
@@ -34,15 +34,17 @@ const zhipuDeep = createOpenAICompatible({
  */
 const app = new Hono();
 
-/** 身份解析：admin = 有效密码 cookie；guest = 匿名 visitorId cookie（首次访问自动种） */
+/** 身份解析：admin = 有效密码 cookie（返回用户名）；guest = 匿名 visitorId cookie（首次访问自动种） */
 app.use('*', async (c: Context, next) => {
   let visitorId = getCookie(c, 'visitor');
   if (!visitorId) {
     visitorId = crypto.randomUUID();
-    setCookie(c, 'visitor', visitorId, { path: '/', maxAge: 60 * 60 * 24 * 365, sameSite: 'Lax' });
+    setCookie(c, 'visitor', visitorId, { path: '/', maxAge: 60 * 60 * 24 * 365, sameSite: 'Lax', httpOnly: true });
   }
   c.set('visitorId', visitorId);
-  c.set('isAdmin', !!verifyToken(getCookie(c, 'auth')));
+  const adminUser = verifyToken(getCookie(c, 'auth'));
+  c.set('isAdmin', !!adminUser);
+  c.set('adminUser', adminUser ?? '');
   await next();
 });
 
@@ -64,46 +66,19 @@ if (authEnabled()) {
   });
 }
 
-// 登录页（自包含单文件，无外部资源依赖）
-app.get('/login', (c: Context) =>
-  c.html(`<!DOCTYPE html>
-<html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>登录 · 问问 Agent</title><style>
-body{margin:0;height:100vh;display:flex;align-items:center;justify-content:center;background:#0f1117;color:#e4e7ef;
-font-family:-apple-system,"PingFang SC",sans-serif}
-.card{width:340px;background:#171a23;border:1px solid #2a2f3f;border-radius:14px;padding:28px}
-h1{font-size:17px;margin:0 0 6px}p{font-size:12px;color:#8b93a7;margin:0 0 18px}
-input{width:100%;box-sizing:border-box;background:#0f1117;border:1px solid #2a2f3f;border-radius:8px;
-padding:10px 12px;color:#e4e7ef;font:inherit;outline:none;margin-bottom:10px}
-input:focus{border-color:#6c8cff}
-button{width:100%;margin-top:14px;padding:10px;border:none;border-radius:8px;cursor:pointer;color:#fff;
-background:linear-gradient(135deg,#6c8cff,#8b6cff);font-size:14px}
-.err{color:#f87171;font-size:12px;margin-top:10px;min-height:16px}
-</style></head><body><div class="card">
-<h1>问问 Agent</h1><p>私有部署站点，管理员登录</p>
-<input type="text" id="user" placeholder="用户名" autofocus>
-<input type="password" id="pw" placeholder="密码">
-<div class="err" id="err"></div>
-<button onclick="login()">进入</button>
-</div><script>
-async function login(){
-  const u=document.getElementById('user').value.trim(), p=document.getElementById('pw').value;
-  const r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p})});
-  if(r.ok){location.href='/'}else{document.getElementById('err').textContent='用户名或密码错误'}
-}
-for(const id of ['user','pw'])document.getElementById(id).addEventListener('keydown',e=>{if(e.key==='Enter')login()});
-</script></body></html>`),
-);
-
 app.post('/api/login', async (c: Context) => {
   const { username, password } = (await c.req.json()) as { username?: string; password?: string };
-  if (!username?.trim() || !checkPassword(username.trim(), password ?? '')) {
+  const trimmed = username?.trim() ?? '';
+  if (!trimmed || !checkPassword(trimmed, password ?? '')) {
     return c.json({ error: '用户名或密码错误' }, 401);
   }
-  setCookie(c, 'auth', makeToken(username.trim()), {
+  setCookie(c, 'auth', makeToken(trimmed), {
     httpOnly: true, sameSite: 'Lax', path: '/', maxAge: 60 * 60 * 24 * 30, // 30 天
   });
-  return c.json({ ok: true, username: username.trim() });
+  // 登录收编（claim）：游客匿名身份下的会话迁移到该账号名下，体验数据无缝继承
+  const claimed = claimGuestSessions(c.get('visitorId') as string, trimmed);
+  if (claimed > 0) console.log(`[auth] ${trimmed} 登录，收编游客会话 ${claimed} 条`);
+  return c.json({ ok: true, username: trimmed });
 });
 
 // httpOnly cookie 只能由服务端清除
@@ -129,15 +104,15 @@ app.post('/api/chat', async (c: Context) => {
   if (!sessionId || !message?.trim()) {
     return c.json({ error: 'sessionId 和 message 必填' }, 400);
   }
-  // 会话按身份隔离：游客用 visitorId，管理员用 'admin'
+  // 会话按身份隔离：游客用 visitorId，管理员用自己的用户名
   const visitorId = c.get('visitorId') as string;
-  const owner = c.get('isAdmin') ? 'admin' : visitorId;
+  const owner = c.get('adminUser') || visitorId;
   if (!sessionExists(sessionId, owner)) {
     return c.json({ error: '会话不存在' }, 404);
   }
-  // 前端选择器传入的聚焦小说：游客只能聚焦公开演示库；不存在时忽略（退化为全库检索）
-  const focusNovel = novelTitle && getNovelByTitle(novelTitle) ? novelTitle : undefined;
-  const focus = c.get('isAdmin') ? focusNovel : (getNovelByTitle(focusNovel ?? '')?.owner === 'public' ? focusNovel : undefined);
+  // 聚焦小说：请求参数优先（兼容旧客户端），否则读会话上绑定的值
+  // 游客只能聚焦公开演示库；绑定书不存在时退化为全库检索
+  const focus = resolveFocus(c, novelTitle, sessionId, owner);
 
   const userMsg: StoredMessage = {
     id: crypto.randomUUID(),
@@ -313,32 +288,60 @@ app.post('/api/chat', async (c: Context) => {
 });
 
 app.get('/api/sessions', (c: Context) => {
-  const owner = c.get('isAdmin') ? 'admin' : (c.get('visitorId') as string);
+  const owner = c.get('adminUser') || (c.get('visitorId') as string);
   return c.json(listSessions(owner));
 });
 
 app.get('/api/sessions/:id/messages', (c: Context) => {
-  const owner = c.get('isAdmin') ? 'admin' : (c.get('visitorId') as string);
+  const owner = c.get('adminUser') || (c.get('visitorId') as string);
   return c.json(getMessages(c.req.param('id') as string, owner));
 });
 
 app.post('/api/sessions', (c: Context) => {
-  const owner = c.get('isAdmin') ? 'admin' : (c.get('visitorId') as string);
+  const owner = c.get('adminUser') || (c.get('visitorId') as string);
   return c.json({ sessionId: createSession(owner) });
 });
 
 app.delete('/api/sessions/:id', (c: Context) => {
-  const owner = c.get('isAdmin') ? 'admin' : (c.get('visitorId') as string);
+  const owner = c.get('adminUser') || (c.get('visitorId') as string);
   return c.json({ ok: deleteSession(c.req.param('id') as string, owner) });
 });
 
-app.get('/api/sessions', (c: Context) => {
-  const owner = c.get('isAdmin') ? 'admin' : (c.get('visitorId') as string);
-  return c.json(listSessions(owner));
+/** 会话元信息（含聚焦小说），前端选择器状态恢复用 */
+app.get('/api/sessions/:id', (c: Context) => {
+  const owner = c.get('adminUser') || (c.get('visitorId') as string);
+  const meta = getSessionMeta(c.req.param('id') as string, owner);
+  if (!meta) return c.json({ error: '会话不存在' }, 404);
+  return c.json(meta);
 });
 
+/** 设置会话聚焦小说（null = 全库检索）。游客只能绑定公开演示库 */
+app.patch('/api/sessions/:id/focus', async (c: Context) => {
+  const owner = c.get('adminUser') || (c.get('visitorId') as string);
+  const sessionId = c.req.param('id') as string;
+  const { novelTitle } = (await c.req.json()) as { novelTitle?: string | null };
+  const title = novelTitle?.trim() || null;
+  if (title) {
+    const novel = getNovelByTitle(title);
+    const publicOk = !c.get('isAdmin') ? novel?.owner === 'public' : !!novel;
+    if (!publicOk) return c.json({ error: '书库中没有该小说' }, 400);
+  }
+  if (!setSessionFocus(sessionId, owner, title)) return c.json({ error: '会话不存在' }, 404);
+  return c.json({ ok: true, focusNovel: title });
+});
+
+/** 聚焦小说解析：请求参数优先，其次会话绑定值；游客仅限公开库，失效则退化为全库 */
+function resolveFocus(c: Context, paramTitle: string | undefined, sessionId: string, owner: string): string | undefined {
+  const candidates = [paramTitle, getSessionFocus(sessionId, owner)].filter(Boolean) as string[];
+  for (const title of candidates) {
+    const novel = getNovelByTitle(title);
+    if (novel && (c.get('isAdmin') || novel.owner === 'public')) return novel.title;
+  }
+  return undefined;
+}
+
 /** 小说库：游客读公开演示库；上传/删除是管理员操作 */
-app.get('/api/novels', (c: Context) => c.json(listNovels(c.get('isAdmin') ? 'admin' : 'guest')));
+app.get('/api/novels', (c: Context) => c.json(listNovels(c.get('adminUser') ? 'admin' : 'guest')));
 
 app.post('/api/novels', async (c: Context) => {
   if (!c.get('isAdmin')) return c.json({ error: '需要管理员权限', needLogin: true }, 401);
@@ -380,4 +383,7 @@ app.get('*', serveStatic({ path: './frontend/dist/index.html' }));
 const port = Number(process.env.PORT) || 3001;
 serve({ fetch: app.fetch, port }, (info) => {
   console.log(`✅ 问问 Agent 服务已启动: http://localhost:${info.port}`);
+  // TTL 成本治理：清理 7 天无活动的游客会话（管理员账号名下的不受影响）
+  const removed = cleanupStaleGuestSessions(7, [...getAdminUsers().keys(), 'admin']);
+  if (removed > 0) console.log(`[cleanup] 已清理 ${removed} 条过期游客会话`);
 });

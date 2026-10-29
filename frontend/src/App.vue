@@ -8,12 +8,27 @@ import ToolLine from './components/ToolLine.vue';
 import ChatInput from './components/ChatInput.vue';
 import { useNovelStore } from './stores/novels';
 import { fetchMe } from './stores/me';
+import LoginView from './views/LoginView.vue';
 
 const store = useSessionStore();
 const novelStore = useNovelStore();
 const sessionId = ref('');
-/** 会话级聚焦小说：选中后检索定向到该书（空 = 全库检索） */
+/** 会话级聚焦小说：绑定在会话上（存库），切回来自动恢复；空 = 全库检索 */
 const focusNovel = ref('');
+
+/** 选择器变更 → 持久化到会话 */
+function onFocusChange() {
+  if (sessionId.value) store.setFocus(sessionId.value, focusNovel.value || null);
+}
+
+/** 从会话元信息恢复聚焦状态 */
+async function restoreFocus(id: string) {
+  const res = await fetch(`/api/sessions/${id}`);
+  if (res.ok) {
+    const meta = await res.json();
+    focusNovel.value = meta.focusNovel || '';
+  }
+}
 /** 深度思考三态：auto=启发式自动路由（默认）/ deep=强制深度 / fast=强制快速 */
 const deepMode = ref<'auto' | 'deep' | 'fast'>('auto');
 
@@ -40,6 +55,7 @@ const QUICK_QUESTIONS = [
 function onSelect(id: string) {
   sessionId.value = id;
   loadHistory();
+  restoreFocus(id);
 }
 
 async function loadHistory() {
@@ -72,6 +88,7 @@ watch(() => store.currentId, (id) => {
   if (id && id !== sessionId.value) {
     sessionId.value = id;
     loadHistory();
+    restoreFocus(id);
   }
 });
 
@@ -83,6 +100,12 @@ const lastMsgId = computed(() => {
 });
 
 /** 流式输出自动滚动：内容或状态变化时跟随到底部；用户上翻历史时不打扰 */
+/** 登录视图：/login 路径时渲染（登录成功后整页跳回 /，管理员身份由 fetchMe 拉取） */
+const isLoginRoute = ref(location.pathname === '/login');
+function onLoginSuccess() {
+  location.replace('/'); // 整页跳转最简单可靠：登录后以管理员身份重新初始化全部状态
+}
+
 const chatArea = ref<HTMLElement>();
 async function followBottom() {
   const el = chatArea.value;
@@ -99,13 +122,16 @@ watch(sessionId, () => nextTick(() => { if (chatArea.value) chatArea.value.scrol
 </script>
 
 <template>
-  <div class="app">
+  <!-- /login：管理员登录视图（游客可直达应用，无需登录） -->
+  <LoginView v-if="isLoginRoute" @success="onLoginSuccess" />
+
+  <div v-else class="app">
     <Sidebar @select="onSelect" />
     <main>
       <header>
         <div class="page-title">{{ store.list.find(s => s.id === sessionId)?.title || '新对话' }}</div>
         <div class="header-right">
-          <select v-model="focusNovel" class="novel-select" title="锁定本次对话检索的小说范围">
+          <select v-model="focusNovel" class="novel-select" title="本次会话的检索范围（已绑定到会话，切换自动恢复）" @change="onFocusChange">
             <option value="">🔍 全库检索</option>
             <option v-for="n in novelStore.list" :key="n.id" :value="n.title">📖 {{ n.title }}</option>
           </select>

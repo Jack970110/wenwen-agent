@@ -4,6 +4,7 @@ import { ref } from 'vue';
 export interface SessionItem {
   id: string;
   title: string;
+  focusNovel: string | null;
   createdAt: string;
 }
 
@@ -35,5 +36,15 @@ export const useSessionStore = defineStore('sessions', () => {
     await refresh();
   }
 
-  return { list, currentId, refresh, create, remove, open };
+  /** 会话级聚焦小说：写入会话，切回来自动恢复（null = 全库检索） */
+  async function setFocus(id: string, novelTitle: string | null) {
+    await fetch(`/api/sessions/${id}/focus`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ novelTitle }),
+    });
+    await refresh();
+  }
+
+  return { list, currentId, refresh, create, remove, open, setFocus };
 });
