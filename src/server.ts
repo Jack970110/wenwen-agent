@@ -14,6 +14,7 @@ import { getJob, startIngestJob } from './rag/ingestJob.js';
 import { contentHash, deleteStaleIngestNovels, findNovelByContentHash } from './rag/store.js';
 import { determineTier } from './rag/tier.js';
 import { ragScope } from './rag/context.js';
+import { logger, chatLog, authLog } from './logger.js';
 import { checkPassword, getAdminUsers, makeToken, verifyToken, authEnabled } from './auth.js';
 
 /** 深度模型直连（两阶段模式的阶段 2 用） */
@@ -47,7 +48,26 @@ app.use('*', async (c: Context, next) => {
   const adminUser = verifyToken(getCookie(c, 'auth'));
   c.set('isAdmin', !!adminUser);
   c.set('adminUser', adminUser ?? '');
+  // 请求 ID：贯穿该请求的全部子日志（前端可传 x-request-id 透传，便于跨端追踪）
+  const requestId = c.req.header('x-request-id') || crypto.randomUUID();
+  c.set('requestId', requestId);
+  c.header('x-request-id', requestId);
+  const start = Date.now();
   await next();
+  // API 访问日志（静态资源不记）；SSE 长连接也在完成时落一条总耗时
+  if (c.req.path.startsWith('/api/')) {
+    logger.info(
+      {
+        reqId: requestId,
+        method: c.req.method,
+        path: c.req.path,
+        status: c.res.status,
+        ms: Date.now() - start,
+        admin: !!adminUser,
+      },
+      'api',
+    );
+  }
 });
 
 /**
@@ -79,7 +99,7 @@ app.post('/api/login', async (c: Context) => {
   });
   // 登录收编（claim）：游客匿名身份下的会话迁移到该账号名下，体验数据无缝继承
   const claimed = claimGuestSessions(c.get('visitorId') as string, trimmed);
-  if (claimed > 0) console.log(`[auth] ${trimmed} 登录，收编游客会话 ${claimed} 条`);
+  if (claimed > 0) authLog.info({ user: trimmed, claimed }, '登录收编游客会话');
   return c.json({ ok: true, username: trimmed });
 });
 
@@ -195,7 +215,7 @@ app.post('/api/chat', async (c: Context) => {
               await sendEvent({ type: 'tool-call', toolName: part.toolName, args: part.input });
             } else if (part.type === 'tool-error') {
               // 工具失败必须落日志：以前静默只推前端，线上排查无门
-              console.error(`[tool-error] ${part.toolName}: ${String(part.error).slice(0, 300)}`);
+              chatLog.error({ tool: part.toolName, err: String(part.error).slice(0, 300) }, '工具执行失败');
               toolEvents.push({ name: part.toolName, args: JSON.stringify(part.input ?? ''), error: true });
               await sendEvent({ type: 'tool-error', toolName: part.toolName, error: String(part.error) });
             } else if (part.type === 'tool-result') {
@@ -237,9 +257,13 @@ app.post('/api/chat', async (c: Context) => {
             await sendEvent({ type: 'text-delta', text: part.text });
           }
         }
-        console.log(
-          `[deep] Z1 阶段2: delta=${deltaCount} 个, 首个 delta 延迟 ${firstDeltaAt ? firstDeltaAt - deepStart : '-'}ms, 生成总耗时 ${Date.now() - deepStart}ms` +
-          (deltaCount > 1 && firstDeltaAt ? `（若首延迟 ≪ 总耗时则为真流式）` : ''),
+        chatLog.info(
+          {
+            deltas: deltaCount,
+            firstDeltaMs: firstDeltaAt ? firstDeltaAt - deepStart : null,
+            totalMs: Date.now() - deepStart,
+          },
+          '深度模式 Z1 阶段2 流式统计（首延迟 ≪ 总耗时则为真流式）',
         );
       } else {
         const result = runAgent(modelInput as ModelMessage[], abortController.signal, { focus });
@@ -250,7 +274,7 @@ app.post('/api/chat', async (c: Context) => {
             await sendEvent({ type: 'tool-call', toolName: part.toolName, args: part.input });
           } else if (part.type === 'tool-error') {
             // 工具失败必须落日志：以前静默只推前端，线上排查无门
-            console.error(`[tool-error] ${part.toolName}: ${String(part.error).slice(0, 300)}`);
+            chatLog.error({ tool: part.toolName, err: String(part.error).slice(0, 300) }, '工具执行失败');
             toolEvents.push({ name: part.toolName, args: JSON.stringify(part.input ?? ''), error: true });
             await sendEvent({ type: 'tool-error', toolName: part.toolName, error: String(part.error) });
           } else if (part.type === 'text-delta') {
@@ -430,14 +454,14 @@ app.get('*', serveStatic({ path: './frontend/dist/index.html' }));
 
 const port = Number(process.env.PORT) || 3001;
 serve({ fetch: app.fetch, port }, (info) => {
-  console.log(`✅ 问渠 Agent 服务已启动: http://localhost:${info.port}`);
+  logger.info({ port: info.port }, '问渠 Agent 服务已启动');
   // TTL 成本治理：清理 7 天无活动的游客会话（管理员账号名下的不受影响）
   const removed = cleanupStaleGuestSessions(7, [...getAdminUsers().keys(), 'admin']);
-  if (removed > 0) console.log(`[cleanup] 已清理 ${removed} 条过期游客会话`);
+  if (removed > 0) logger.info({ removed }, '已清理过期游客会话');
   // 自愈：老版本入库的小说缺失结构元数据，从已有块回填（无需重新向量化）
   const backfilled = backfillAllMissingMeta();
-  if (backfilled > 0) console.log(`[meta] 已回填 ${backfilled} 本小说的结构元数据`);
+  if (backfilled > 0) logger.info({ backfilled }, '结构元数据自愈回填完成');
   // 自愈：进程重启会丢掉内存里的入库任务，卡在 ingesting 的是半截数据，启动时清掉
   const stale = deleteStaleIngestNovels();
-  if (stale > 0) console.log(`[cleanup] 已清理 ${stale} 条中断的入库任务（可重新上传）`);
+  if (stale > 0) logger.info({ stale }, '已清理中断的入库任务（可重新上传）');
 });

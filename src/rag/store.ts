@@ -4,6 +4,7 @@ import { mkdirSync } from 'node:fs';
 import { cosineSimilarity } from './embed.js';
 import type { NovelChunk } from './chunker.js';
 import { determineTier, type Tier } from './tier.js';
+import { logger } from '../logger.js';
 
 /**
  * 向量存储（v3a MVP）：SQLite 存向量 JSON，查询时全量暴力余弦检索。
@@ -190,7 +191,7 @@ export function backfillAllMissingMeta(): number {
   let n = 0;
   for (const r of rows) {
     if (backfillNovelMeta(r.id)) {
-      console.log(`[meta] 已回填《${r.title}》的结构元数据`);
+      logger.info({ novel: r.title }, '结构元数据自愈回填');
       n++;
     }
   }

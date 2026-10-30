@@ -4,6 +4,7 @@ import { getClient, summarizeChapters } from './summarize.js';
 import { generateText } from 'ai';
 import { insertChunks, setNovelBookSummary } from './store.js';
 import { envPositive, mapPool } from './util.js';
+import { summaryLog } from '../logger.js';
 
 /**
  * 摘要层构建（T3/T4）：入库管道两条路径（CLI / Web 异步）共用。
@@ -51,6 +52,8 @@ export async function buildSummaryLayer(
   const segmentTotal = tier === 'T4' ? Math.ceil(chapterGroups.length / SEGMENT_SIZE) : 0;
   const total = chapterGroups.length + segmentTotal;
   let done = 0;
+  const t0 = Date.now();
+  let skipped = 0;
 
   // 章摘要（level 1）：SUMMARY_BATCH 章/次调用 + SUMMARY_CONCURRENCY 并发
   const chapterSummaryChunks: (NovelChunk & { vector: number[] })[] = [];
@@ -73,7 +76,7 @@ export async function buildSummaryLayer(
     } catch (err) {
       // 批量失败（内容安全过滤 1301 / 限流重试耗尽）：降级为逐章重试，
       // 单章再失败只跳过该章——一章敏感不该让几百章的摘要全功尽弃
-      console.error(`[summary] 批量摘要失败，降级逐章: ${err instanceof Error ? err.message.slice(0, 120) : err}`);
+      summaryLog.warn({ err: err instanceof Error ? err.message.slice(0, 120) : String(err), chapters: batch.map((g) => g.label) }, '批量摘要失败，降级逐章');
       for (const g of batch) {
         try {
           const [s] = await summarizeChapters([{ label: g.label, text: g.text }]);
@@ -84,7 +87,8 @@ export async function buildSummaryLayer(
             index: g.no, text, vector,
           });
         } catch (e2) {
-          console.error(`[summary] 跳过 ${g.label}: ${e2 instanceof Error ? e2.message.slice(0, 80) : e2}`);
+          skipped++;
+          summaryLog.warn({ chapter: g.label, err: e2 instanceof Error ? e2.message.slice(0, 80) : String(e2) }, '章节摘要跳过');
         }
       }
     }
@@ -93,10 +97,13 @@ export async function buildSummaryLayer(
   });
   chapterSummaryChunks.sort((a, b) => a.globalChapter - b.globalChapter);
   insertChunks(novelId, chapterSummaryChunks, 1);
+  const tChapter = Date.now();
+  summaryLog.info({ ms: Date.now() - t0, done: chapterSummaryChunks.length, totalChapters: chapterGroups.length, skipped }, '章摘要完成');
 
   // 段落摘要（level 2，仅 T4）：每 30 章的章摘要聚合再概括
   // 同样走并发池——串行 15 次是收尾阶段拖慢的主因（单次输入 30 份章摘要，是最耗时的调用类型）
   let segmentCount = 0;
+  let segmentTexts: string[] = [];
   if (tier === 'T4') {
     const segmentChunks: (NovelChunk & { vector: number[] })[] = [];
     const segmentGroups: (typeof chapterSummaryChunks)[] = [];
@@ -117,13 +124,21 @@ export async function buildSummaryLayer(
     segmentChunks.sort((a, b) => a.globalChapter - b.globalChapter);
     insertChunks(novelId, segmentChunks, 2);
     segmentCount = segmentChunks.length;
+    segmentTexts = segmentChunks.map((c) => c.text);
   }
+  const tSegment = Date.now();
+  if (tier === 'T4') summaryLog.info({ ms: Date.now() - tChapter, segments: segmentCount }, '段落摘要完成');
 
   // 顶层全书梗概（不向量化，聚焦时注入提示词）
-  const summarySource = segmentCount > 0
-    ? chapterSummaryChunks.filter((c) => c.text.startsWith('【段落摘要】')).map((c) => c.text)
-    : chapterSummaryChunks.map((c) => c.text);
+  // T4 用段落摘要（15 条覆盖全书）；T3 用章摘要。
+  // 注意段落摘要在独立的 segmentChunks 里（曾误从 chapterSummaryChunks 里筛前缀，
+  // 筛出空数组 → 智谱报"未正常接收到prompt参数"）
+  const summarySource = (segmentTexts.length > 0 ? segmentTexts : chapterSummaryChunks.map((c) => c.text));
+  if (summarySource.length === 0) {
+    throw new Error('无摘要节点可用于生成全书梗概（章摘要可能全部被跳过）');
+  }
   await generateBookSummary(novelId, summarySource);
+  summaryLog.info({ ms: Date.now() - tSegment, inputs: summarySource.length, summaryMs: Date.now() - t0 }, '全书梗概完成');
 
   return chapterSummaryChunks.length + segmentCount;
 }

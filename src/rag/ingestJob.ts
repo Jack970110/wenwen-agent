@@ -4,6 +4,7 @@ import { buildSummaryLayer } from './summaries.js';
 import { contentHash, createNovel, deleteNovel, findNovelByContentHash, insertChunks, saveNovelMetaFromChunks, setNovelStatus } from './store.js';
 import { determineTier } from './tier.js';
 import { envPositive, mapPool } from './util.js';
+import { ingestLog } from '../logger.js';
 
 /**
  * 异步入库任务队列（进程内实现）。
@@ -54,6 +55,7 @@ export function startIngestJob(title: string, rawText: string, chunkOpts: ChunkO
 }
 
 async function runJob(job: IngestJob, rawText: string, chunkOpts: ChunkOptions) {
+  const t0 = Date.now();
   try {
     // 指纹查重：同内容文件秒拒（在切块之前，失败成本为零）
     const hash = contentHash(rawText);
@@ -69,9 +71,11 @@ async function runJob(job: IngestJob, rawText: string, chunkOpts: ChunkOptions) 
       throw new Error('未解析到有效内容（需包含"第X章"等章节标题）');
     }
     job.total = chunks.length;
+    const tChunk = Date.now();
 
     // 定级：T1 微型书不走向量检索（全量塞上下文），跳过向量化省时省钱
     const tier = determineTier(chunks.reduce((s, c) => s + c.text.length, 0));
+    ingestLog.info({ novel: job.title, tier, chunks: chunks.length, totalChars: chunks.reduce((s, c) => s + c.text.length, 0), chunkMs: Date.now() - t0 }, '切块完成，开始入库');
 
     if (tier === 'T1') {
       const novelId = createNovel(job.title, 'admin', rawText, hash);
@@ -80,6 +84,7 @@ async function runJob(job: IngestJob, rawText: string, chunkOpts: ChunkOptions) 
       setNovelStatus(novelId, 'ready'); // T1 秒完成，直接可用
       job.embedded = chunks.length;
       job.status = 'done';
+      ingestLog.info({ novel: job.title, chars: chunks.reduce((s, c) => s + c.text.length, 0), chunkMs: Date.now() - t0 }, 'T1 入库完成（全文模式，免向量化）');
       return;
     }
 
@@ -106,6 +111,8 @@ async function runJob(job: IngestJob, rawText: string, chunkOpts: ChunkOptions) 
       job.embedded = Math.min(embeddedCount, chunks.length);
     });
     insertChunks(novelId, withVectors, 0);
+    const tVec = Date.now();
+    ingestLog.info({ novel: job.title, chunks: chunks.length, batchSize: BATCH, concurrency: EMBED_CONCURRENCY, embedMs: Date.now() - tChunk }, '向量化完成');
 
     // 阶段 2（T3/T4）：摘要层生成 + 向量化（level 1 章摘要 / level 2 段落摘要）
     if (tier === 'T3' || tier === 'T4') {
@@ -120,11 +127,13 @@ async function runJob(job: IngestJob, rawText: string, chunkOpts: ChunkOptions) 
     saveNovelMetaFromChunks(novelId, chunks);
     setNovelStatus(novelId, 'ready');
     job.status = 'done';
+    ingestLog.info({ novel: job.title, embedMs: Date.now() - tChunk, summaryMs: Date.now() - tVec, totalMs: Date.now() - t0 }, '入库完成');
   } catch (err) {
     // 失败回滚：不留半截数据
     if (job.novelId) deleteNovel(job.novelId);
     job.status = 'error';
     job.error = err instanceof Error ? err.message : String(err);
+    ingestLog.error({ novel: job.title, totalMs: Date.now() - t0, error: job.error }, '入库失败，已回滚');
   }
 }
 

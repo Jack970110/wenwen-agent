@@ -3,6 +3,7 @@ import { rerank } from './rerank.js';
 import { searchNovelChunks } from './store.js';
 import { ragScope } from './context.js';
 import { decomposeQuery } from './decompose.js';
+import { retrieveLog } from '../logger.js';
 
 /**
  * 统一检索入口：向量粗召回 → rerank 精排。
@@ -43,7 +44,7 @@ export async function retrieve(query: string, topK = 3, novelId?: string): Promi
     }));
   } catch (err) {
     // 降级：rerank 挂了不阻断检索，退回向量序
-    console.error(`[retrieve] rerank 失败，降级为向量序: ${err instanceof Error ? err.message : err}`);
+    retrieveLog.warn({ err: err instanceof Error ? err.message : String(err) }, 'rerank 失败，降级为向量序');
     return candidates.slice(0, topK).map((c) => ({ ...c, vectorScore: c.similarity, reranked: false }));
   }
 }
@@ -60,7 +61,7 @@ export async function retrieveMulti(query: string, topK = 3, novelId?: string): 
   try {
     subQueries = await decomposeQuery(query);
   } catch (err) {
-    console.error(`[retrieve] 查询分解失败，回退单路: ${err instanceof Error ? err.message : err}`);
+    retrieveLog.warn({ err: err instanceof Error ? err.message : String(err) }, '查询分解失败，回退单路');
   }
 
   // 逐子问题检索 + 按 text 去重（不同子查询可能命中同一块）
