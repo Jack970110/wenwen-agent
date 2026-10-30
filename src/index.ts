@@ -18,7 +18,7 @@ async function main() {
     process.exit(1);
   }
 
-  console.log('问问 Agent 已启动（输入 exit 退出）\n');
+  console.log('问渠 Agent 已启动（输入 exit 退出）\n');
   const rl = createInterface({ input: stdin, output: stdout });
   const messages: UIMessage[] = [];
 
@@ -30,7 +30,7 @@ async function main() {
 
     messages.push({ role: 'user', parts: [{ type: 'text', text }], id: crypto.randomUUID() });
 
-    process.stdout.write('问问 > ');
+    process.stdout.write('问渠 > ');
     let full = '';
     try {
       const result = runAgent(await convertToModelMessages(messages));

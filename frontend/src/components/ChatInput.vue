@@ -82,11 +82,14 @@ footer { padding: 14px 20px 18px; }
 .input-wrap:focus-within { border-color: var(--accent); }
 textarea {
   flex: 1; background: transparent; border: none; outline: none; resize: none;
-  color: var(--text); font: inherit; line-height: 1.5; max-height: 120px;
+  color: var(--text); font: inherit; max-height: 120px;
+  /* 单行高度 = 按钮高度（20 行高 + 16 上下 padding = 36px），
+     flex-end 对齐时文字才和按钮视觉居中；多行时随 scrollHeight 增长 */
+  padding: 8px 0; line-height: 20px;
 }
 textarea::placeholder { color: var(--dim); }
 .send, .stop, .deep-toggle {
-  border: none; border-radius: 8px; padding: 8px 14px; cursor: pointer;
+  border: none; border-radius: 8px; padding: 0 14px; height: 36px; cursor: pointer;
   font-size: 13px; color: #fff; flex-shrink: 0;
 }
 .send { background: linear-gradient(135deg, var(--accent), var(--accent2)); }

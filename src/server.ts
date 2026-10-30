@@ -6,11 +6,13 @@ import { setCookie, getCookie } from 'hono/cookie';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { type ModelMessage, streamText } from 'ai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
-import { runAgent } from './agent.js';
+import { runAgent, type FocusInfo } from './agent.js';
 import { appendMessage, checkChatLimits, claimGuestSessions, cleanupStaleGuestSessions, createSession, deleteSession, getMessages, getSessionFocus, getSessionMeta, listSessions, sessionExists, setSessionFocus, type StoredMessage } from './db.js';
 import { chunkNovel } from './rag/chunker.js';
-import { listNovels, deleteNovel, getNovelByTitle, backfillAllMissingMeta } from './rag/store.js';
+import { listNovels, deleteNovel, getNovelByTitle, getNovelMeta, getNovelFullText, getNovelBookSummary, backfillAllMissingMeta } from './rag/store.js';
 import { getJob, startIngestJob } from './rag/ingestJob.js';
+import { contentHash, deleteStaleIngestNovels, findNovelByContentHash } from './rag/store.js';
+import { determineTier } from './rag/tier.js';
 import { ragScope } from './rag/context.js';
 import { checkPassword, getAdminUsers, makeToken, verifyToken, authEnabled } from './auth.js';
 
@@ -113,7 +115,6 @@ app.post('/api/chat', async (c: Context) => {
   // 聚焦小说：请求参数优先（兼容旧客户端），否则读会话上绑定的值
   // 游客只能聚焦公开演示库；绑定书不存在时退化为全库检索
   const focus = resolveFocus(c, novelTitle, sessionId, owner);
-
   const userMsg: StoredMessage = {
     id: crypto.randomUUID(),
     role: 'user',
@@ -165,45 +166,62 @@ app.post('/api/chat', async (c: Context) => {
 
       const sendEvent = (evt: Record<string, unknown>) => stream.writeSSE({ data: JSON.stringify(evt) });
 
-      await ragScope.run({ onlyPublic }, async () => {
+      await ragScope.run({ onlyPublic, tier: focus?.tier, fullText: focus?.fullText }, async () => {
         if (deep) {
         /**
          * 两阶段深度模式（绕过智谱 Z1 流式工具调用的接口缺陷）：
          * 阶段 1：快模型跑 Agent loop 完成工具调用/检索（此链路稳定），收集检索结果
          * 阶段 2：Z1 不带工具，基于资料做纯推理合成——"廉价模型检索、强模型合成"
+         * 例外：聚焦书为 T1 时全文已可注入，跳过阶段 1 直接 Z1 推理
          */
-        await sendEvent({ type: 'status', message: '检索资料中…' });
-        const fast = runAgent(modelInput as ModelMessage[], abortController.signal, focus, { retrievalOnly: true });
-        const toolResults: { name: string; output: string }[] = [];
-        for await (const part of fast.fullStream) {
-          if (part.type === 'tool-call') {
-            toolEvents.push({ name: part.toolName, args: JSON.stringify(part.input) });
-            await sendEvent({ type: 'tool-call', toolName: part.toolName, args: part.input });
-          } else if (part.type === 'tool-error') {
-            // 工具失败必须落日志：以前静默只推前端，线上排查无门
-            console.error(`[tool-error] ${part.toolName}: ${String(part.error).slice(0, 300)}`);
-            toolEvents.push({ name: part.toolName, args: JSON.stringify(part.input ?? ''), error: true });
-            await sendEvent({ type: 'tool-error', toolName: part.toolName, error: String(part.error) });
-          } else if (part.type === 'tool-result') {
-            toolResults.push({ name: part.toolName, output: JSON.stringify(part.output).slice(0, 6000) });
-          }
-        }
+        let z1Messages: ModelMessage[] = modelInput as ModelMessage[];
+        let z1System = '你是深度分析助手。基于提供的检索资料深度思考后回答用户最后的问题。要求：提炼归纳、标注书名和章节出处、资料里没有的内容不编造、资料不足时如实说明。';
 
-        await sendEvent({ type: 'status', message: '深度思考中…' });
-        const deepStart = Date.now();
-        let firstDeltaAt = 0;
-        let deltaCount = 0;
-        const context = toolResults.length
-          ? toolResults.map((r) => `[${r.name} 检索结果]\n${r.output}`).join('\n\n')
-          : '（本轮没有检索到资料，若问题涉及小说内容请如实说明未找到）';
-        const deepResult = streamText({
-          model: zhipuDeep(process.env.MODEL_DEEP || 'glm-z1-flash'),
-          system: `你是深度分析助手。基于提供的检索资料深度思考后回答用户最后的问题。要求：提炼归纳、标注书名和章节出处、资料里没有的内容不编造、资料不足时如实说明。`,
-          messages: [
+        if (focus?.tier === 'T1' && focus.fullText) {
+          // T1 微型书：全文直接注入，跳过检索阶段
+          await sendEvent({ type: 'status', message: '深度思考中…' });
+          z1Messages = [
+            ...modelInput,
+            { role: 'assistant', content: `[已提供资料]\n《${focus.title}》全文：\n${focus.fullText}` },
+            { role: 'user', content: '请基于以上文档全文，深度思考后回答我之前的问题。要求提炼归纳、标注章节或段落出处。' },
+          ];
+        } else {
+          await sendEvent({ type: 'status', message: '检索资料中…' });
+          const fast = runAgent(modelInput as ModelMessage[], abortController.signal, { retrievalOnly: true, focus });
+          const toolResults: { name: string; output: string }[] = [];
+          for await (const part of fast.fullStream) {
+            if (part.type === 'tool-call') {
+              toolEvents.push({ name: part.toolName, args: JSON.stringify(part.input) });
+              await sendEvent({ type: 'tool-call', toolName: part.toolName, args: part.input });
+            } else if (part.type === 'tool-error') {
+              // 工具失败必须落日志：以前静默只推前端，线上排查无门
+              console.error(`[tool-error] ${part.toolName}: ${String(part.error).slice(0, 300)}`);
+              toolEvents.push({ name: part.toolName, args: JSON.stringify(part.input ?? ''), error: true });
+              await sendEvent({ type: 'tool-error', toolName: part.toolName, error: String(part.error) });
+            } else if (part.type === 'tool-result') {
+              toolResults.push({ name: part.toolName, output: JSON.stringify(part.output).slice(0, 6000) });
+            }
+          }
+
+          await sendEvent({ type: 'status', message: '深度思考中…' });
+          const context = toolResults.length
+            ? toolResults.map((r) => `[${r.name} 检索结果]\n${r.output}`).join('\n\n')
+            : '（本轮没有检索到资料，若问题涉及知识库内容请如实说明未找到）';
+          z1Messages = [
             ...modelInput,
             { role: 'assistant', content: `[已完成的检索资料]\n${context}` },
             { role: 'user', content: '请基于以上检索资料，深度思考后回答我之前的问题。' },
-          ],
+          ];
+        }
+
+        // 阶段 2：Z1 纯推理合成（T1 与两阶段共用此流式输出）
+        const deepStart = Date.now();
+        let firstDeltaAt = 0;
+        let deltaCount = 0;
+        const deepResult = streamText({
+          model: zhipuDeep(process.env.MODEL_DEEP || 'glm-z1-flash'),
+          system: z1System,
+          messages: z1Messages,
           abortSignal: abortController.signal,
           maxRetries: 5,
         });
@@ -224,7 +242,7 @@ app.post('/api/chat', async (c: Context) => {
           (deltaCount > 1 && firstDeltaAt ? `（若首延迟 ≪ 总耗时则为真流式）` : ''),
         );
       } else {
-        const result = runAgent(modelInput as ModelMessage[], abortController.signal, focus);
+        const result = runAgent(modelInput as ModelMessage[], abortController.signal, { focus });
 
         for await (const part of result.fullStream) {
           if (part.type === 'tool-call') {
@@ -324,18 +342,30 @@ app.patch('/api/sessions/:id/focus', async (c: Context) => {
   if (title) {
     const novel = getNovelByTitle(title);
     const publicOk = !c.get('isAdmin') ? novel?.owner === 'public' : !!novel;
-    if (!publicOk) return c.json({ error: '书库中没有该小说' }, 400);
+    if (!publicOk) return c.json({ error: '知识库中没有该文档' }, 400);
   }
   if (!setSessionFocus(sessionId, owner, title)) return c.json({ error: '会话不存在' }, 404);
   return c.json({ ok: true, focusNovel: title });
 });
 
-/** 聚焦小说解析：请求参数优先，其次会话绑定值；游客仅限公开库，失效则退化为全库 */
-function resolveFocus(c: Context, paramTitle: string | undefined, sessionId: string, owner: string): string | undefined {
+/** 聚焦小说解析：请求参数优先，其次会话绑定值；游客仅限公开库，失效则退化为全库。
+ *  返回 FocusInfo（含体量级别与 T1 全文），供提示词注入与深度模式分支使用 */
+function resolveFocus(c: Context, paramTitle: string | undefined, sessionId: string, owner: string): FocusInfo | undefined {
   const candidates = [paramTitle, getSessionFocus(sessionId, owner)].filter(Boolean) as string[];
   for (const title of candidates) {
     const novel = getNovelByTitle(title);
-    if (novel && (c.get('isAdmin') || novel.owner === 'public')) return novel.title;
+    if (novel && (c.get('isAdmin') || novel.owner === 'public')) {
+      const meta = getNovelMeta(novel.id);
+      // 兜底：分级功能上线前入库的书 meta 里没有 tier——按字数重算而不是猜 T2，
+      // 否则百万字体量的存量书永远走不到 T4 的查询分解/多路检索
+      const tier = meta?.tier ?? determineTier(meta?.totalChars ?? 0);
+      return {
+        title: novel.title,
+        tier,
+        fullText: tier === 'T1' ? getNovelFullText(novel.id) : null,
+        bookSummary: getNovelBookSummary(novel.id) ?? undefined,
+      };
+    }
   }
   return undefined;
 }
@@ -349,18 +379,36 @@ app.post('/api/novels', async (c: Context) => {
   const file = body.file as File | undefined;
   const title = String(body.title ?? '').trim();
 
-  if (!title) return c.json({ error: '请填写小说名' }, 400);
+  if (!title) return c.json({ error: '请填写文档名' }, 400);
   if (!file || !file.name.endsWith('.txt')) return c.json({ error: '仅支持 txt 文件' }, 400);
   // 20MB ≈ 700 万字 ≈ 1.7 万块，异步入库 + 429 重试可覆盖；上限主要防滥用而非技术瓶颈
   if (file.size > 20 * 1024 * 1024) return c.json({ error: '文件不能超过 20MB' }, 400);
 
   const raw = await file.text();
-  const chunks = chunkNovel(raw);
+  // 指纹查重：同内容文件直接 409，不占用并发名额、不跑切块
+  const dup = findNovelByContentHash(contentHash(raw));
+  if (dup) return c.json({ error: `该文件内容已入库（《${dup.title}》），无需重复上传` }, 409);
+  // 可选切块参数（表单字段，不传走默认）：chunkSize / chunkMin / chunkOverlap
+  const num = (v: unknown) => {
+    const n = Number(v);
+    return Number.isFinite(n) && n > 0 ? n : undefined;
+  };
+  const chunkOpts = {
+    targetSize: num(body.chunkSize),
+    minSize: num(body.chunkMin),
+    overlap: num(body.chunkOverlap),
+  };
+  const chunks = chunkNovel(raw, chunkOpts);
   if (chunks.length === 0) return c.json({ error: '未解析到有效内容（需包含"第X章"等章节标题）' }, 400);
 
   // 异步入库：立即返回 jobId，前端轮询进度（长篇向量化要几分钟，不能同步挂着）
-  const jobId = startIngestJob(title, raw);
-  return c.json({ jobId }, 202);
+  try {
+    const jobId = startIngestJob(title, raw, chunkOpts);
+    return c.json({ jobId }, 202);
+  } catch (e) {
+    // 并发上限（默认 1 个）：让前端明确失败，而不是排队后进度互相覆盖
+    return c.json({ error: e instanceof Error ? e.message : '入库任务启动失败' }, 429);
+  }
 });
 
 /** 入库任务进度查询 */
@@ -382,11 +430,14 @@ app.get('*', serveStatic({ path: './frontend/dist/index.html' }));
 
 const port = Number(process.env.PORT) || 3001;
 serve({ fetch: app.fetch, port }, (info) => {
-  console.log(`✅ 问问 Agent 服务已启动: http://localhost:${info.port}`);
+  console.log(`✅ 问渠 Agent 服务已启动: http://localhost:${info.port}`);
   // TTL 成本治理：清理 7 天无活动的游客会话（管理员账号名下的不受影响）
   const removed = cleanupStaleGuestSessions(7, [...getAdminUsers().keys(), 'admin']);
   if (removed > 0) console.log(`[cleanup] 已清理 ${removed} 条过期游客会话`);
   // 自愈：老版本入库的小说缺失结构元数据，从已有块回填（无需重新向量化）
   const backfilled = backfillAllMissingMeta();
   if (backfilled > 0) console.log(`[meta] 已回填 ${backfilled} 本小说的结构元数据`);
+  // 自愈：进程重启会丢掉内存里的入库任务，卡在 ingesting 的是半截数据，启动时清掉
+  const stale = deleteStaleIngestNovels();
+  if (stale > 0) console.log(`[cleanup] 已清理 ${stale} 条中断的入库任务（可重新上传）`);
 });

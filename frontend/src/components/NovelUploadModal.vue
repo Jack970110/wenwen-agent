@@ -9,13 +9,13 @@ const store = useNovelStore();
 const title = ref('');
 const file = ref<File | null>(null);
 const fileEl = ref<HTMLInputElement>();
+const submitting = ref(false); // 仅覆盖上传 POST 的短暂过程；向量化进度走全局 activeJob
 
 // 每次打开重置表单
 watch(() => props.open, (v) => {
   if (v) {
     title.value = '';
     file.value = null;
-    store.uploadMsg = '';
     store.uploadError = '';
   }
 });
@@ -30,8 +30,11 @@ function onFileChange(e: Event) {
 
 async function doUpload() {
   if (!title.value.trim() || !file.value) return;
+  submitting.value = true;
   const ok = await store.upload(title.value.trim(), file.value);
-  if (ok) setTimeout(() => emit('close'), 1200);
+  submitting.value = false;
+  // 提交成功即关闭：向量化要几分钟，进度在左侧知识库全局展示，不要求用户守着弹窗
+  if (ok) emit('close');
 }
 </script>
 
@@ -39,35 +42,29 @@ async function doUpload() {
   <div v-if="open" class="mask" @click.self="emit('close')">
     <div class="modal">
       <div class="head">
-        <div class="t">上传小说</div>
+        <div class="t">上传文档</div>
         <button class="x" @click="emit('close')">✕</button>
       </div>
 
       <label class="field">
-        <span>小说名</span>
-        <input v-model="title" placeholder="如：雪夜来客" :disabled="store.uploading" />
+        <span>文档名</span>
+        <input v-model="title" placeholder="如：雪夜来客" :disabled="submitting" />
       </label>
 
       <label class="field">
-        <span>txt 文件（≤20MB，需含"第X章"章节标题）</span>
+        <span>txt 文件（≤20MB；有章节标题按章节切分，没有则按空行分段）</span>
         <div class="file-row" @click="fileEl?.click()">
           <span>{{ file?.name || '选择文件…' }}</span>
-          <input ref="fileEl" type="file" accept=".txt" hidden :disabled="store.uploading" @change="onFileChange" />
+          <input ref="fileEl" type="file" accept=".txt" hidden :disabled="submitting" @change="onFileChange" />
         </div>
       </label>
 
-      <div v-if="store.uploadMsg" class="msg ok">
-        {{ store.uploadMsg }}
-        <div v-if="store.progress.total > 0 && store.uploading" class="bar">
-          <div class="bar-fill" :style="{ width: (store.progress.embedded / store.progress.total) * 100 + '%' }"></div>
-        </div>
-      </div>
       <div v-if="store.uploadError" class="msg err">{{ store.uploadError }}</div>
 
-      <button class="submit" :disabled="store.uploading || !title.trim() || !file" @click="doUpload">
-        {{ store.uploading ? '入库中…' : '开始入库' }}
+      <button class="submit" :disabled="submitting || !title.trim() || !file" @click="doUpload">
+        {{ submitting ? '提交中…' : '开始入库' }}
       </button>
-      <div class="tip">入库 = 切块 → 向量化 → 存库，之后就能在对话里问这本小说了</div>
+      <div class="tip">入库 = 切块 → 向量化 → 存库；提交后可在左侧知识库查看进度，无需停留在弹窗</div>
     </div>
   </div>
 </template>

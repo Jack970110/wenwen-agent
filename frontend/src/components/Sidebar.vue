@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { useSessionStore } from '../stores/sessions';
 import { useNovelStore } from '../stores/novels';
 import { fetchMe, isAdmin, logout, username } from '../stores/me';
@@ -9,7 +9,12 @@ const sessionStore = useSessionStore();
 const novelStore = useNovelStore();
 const uploadOpen = ref(false);
 
-onMounted(() => novelStore.refresh());
+const progressPct = computed(() => {
+  const j = novelStore.activeJob;
+  return j && j.total > 0 ? Math.round((j.embedded / j.total) * 100) : 0;
+});
+
+onMounted(() => novelStore.resume());
 </script>
 
 <template>
@@ -17,8 +22,8 @@ onMounted(() => novelStore.refresh());
     <div class="brand">
       <div class="logo">问</div>
       <div>
-        <div class="name">问问 Agent</div>
-        <div class="sub">小说分析 · 数据分析</div>
+        <div class="name">问渠 Agent</div>
+        <div class="sub">知识库问答 · 数据分析</div>
       </div>
     </div>
     <button class="new-chat" @click="sessionStore.create()">＋ 新对话</button>
@@ -40,14 +45,36 @@ onMounted(() => novelStore.refresh());
 
       <!-- 小说库：游客只读公开演示库；管理员可上传/删除 -->
       <div class="section-label novel-label">
-        {{ isAdmin ? '小说库' : '演示小说库' }}
-        <button v-if="isAdmin" class="add" title="上传小说" @click="uploadOpen = true">＋</button>
+        {{ isAdmin ? '知识库' : '演示知识库' }}
+        <button v-if="isAdmin" class="add" title="上传文档" @click="uploadOpen = true">＋</button>
+      </div>
+      <div v-if="novelStore.ingestError" class="ingest-msg err">{{ novelStore.ingestError }}</div>
+      <!-- 全局入库进度：提交后即显示，关弹窗/刷新不丢（store 持久化） -->
+      <div v-if="novelStore.activeJob" class="ingest-progress">
+        <div class="row">
+          <span class="t">⏳ {{ novelStore.activeJob.title }}</span>
+          <span class="pct" v-if="novelStore.activeJob.total > 0">
+            {{ Math.round((novelStore.activeJob.embedded / novelStore.activeJob.total) * 100) }}%
+          </span>
+        </div>
+        <div class="stage">
+          {{ novelStore.activeJob.total > 0
+            ? `${novelStore.activeJob.stage === 'summarizing' ? '生成摘要' : '向量化'} ${novelStore.activeJob.embedded}/${novelStore.activeJob.total}`
+            : '切块中…' }}
+        </div>
+        <div class="bar">
+          <div class="bar-fill" :style="{ width: progressPct + '%' }"></div>
+        </div>
       </div>
       <div v-for="n in novelStore.list" :key="n.id" class="session-item novel">
-        <span class="title">📖 {{ n.title }} <i>{{ n.chunkCount }}块</i></span>
-        <button v-if="isAdmin" class="del" title="删除小说" @click.stop="novelStore.remove(n.id)">✕</button>
+        <span class="title">
+          📖 {{ n.title }}
+          <i v-if="n.status === 'ingesting'">入库中…</i>
+          <i v-else>{{ n.chunkCount }}块</i>
+        </span>
+        <button v-if="isAdmin" class="del" title="删除文档" @click.stop="novelStore.remove(n.id)">✕</button>
       </div>
-      <div v-if="!isAdmin" class="empty guest-tip">体验版仅含演示小说</div>
+      <div v-if="!isAdmin" class="empty guest-tip">体验版仅含演示文档</div>
     </div>
 
     <!-- 身份区：游客给管理员登录入口；管理员显示身份和退出 -->
@@ -79,6 +106,7 @@ onMounted(() => novelStore.refresh());
   background: transparent; border: none; cursor: pointer; padding: 0;
 }
 .logout:hover, .login-link:hover { text-decoration: underline; }
+</style>
 
 <style scoped>
 .novel-label { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; }
@@ -88,6 +116,18 @@ onMounted(() => novelStore.refresh());
 }
 .add:hover { color: var(--accent); border-color: var(--accent); }
 .session-item.novel .title i { font-style: normal; font-size: 11px; opacity: .6; margin-left: 4px; }
+.ingest-progress {
+  margin: 4px 8px 8px; padding: 8px 10px;
+  background: var(--panel2); border: 1px solid var(--border); border-radius: 8px;
+}
+.ingest-progress .row { display: flex; justify-content: space-between; gap: 6px; }
+.ingest-progress .t { font-size: 12px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ingest-progress .pct { font-size: 12px; color: var(--accent2); flex-shrink: 0; }
+.ingest-progress .stage { font-size: 11px; color: var(--dim); margin: 2px 0 6px; }
+.ingest-progress .bar { height: 4px; background: var(--bg); border-radius: 3px; overflow: hidden; }
+.ingest-progress .bar-fill { height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent2)); transition: width .6s; }
+.ingest-msg { font-size: 12px; margin: 4px 8px 8px; padding: 8px 10px; border-radius: 8px; }
+.ingest-msg.err { background: rgba(248,113,113,.1); color: var(--err); border: 1px solid rgba(248,113,113,.3); }
 </style>
 
 

@@ -15,7 +15,7 @@ import { registerWenwenTools } from './mcp-register.js';
  */
 
 const server = new McpServer({
-  name: 'wenwen-data',
+  name: 'wenqu-data',
   version: '0.1.0',
 });
 

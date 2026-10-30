@@ -28,7 +28,7 @@ const httpServer = http.createServer(async (req, res) => {
   for await (const chunk of req) chunks.push(chunk as Buffer);
 
   // 每请求一套实例（无状态模式标准写法）
-  const server = new McpServer({ name: 'wenwen-data', version: '0.1.0' });
+  const server = new McpServer({ name: 'wenqu-data', version: '0.1.0' });
   registerWenwenTools(server);
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
   res.on('close', () => {
@@ -48,5 +48,5 @@ const httpServer = http.createServer(async (req, res) => {
 
 const port = Number(process.env.MCP_HTTP_PORT) || 3002;
 httpServer.listen(port, () => {
-  console.error(`✅ wenwen-data MCP Server (HTTP) 已启动: http://localhost:${port}/mcp`);
+  console.error(`✅ wenqu-data MCP Server (HTTP) 已启动: http://localhost:${port}/mcp`);
 });

@@ -50,6 +50,7 @@ const QUICK_QUESTIONS = [
   '看看第 1 到 8 章的数据，读者流失发生在哪里？',
   '钥匙藏在哪里？',
   '帮我整体分析这本书的数据表现，出一份报告',
+  '库里有哪些文档？分别讲了什么？',
 ];
 
 function onSelect(id: string) {
@@ -81,7 +82,7 @@ store.refresh().then(async () => {
   }
   sessionId.value = store.currentId;
 });
-novelStore.refresh();
+novelStore.resume();
 fetchMe(); // 游客/管理员身份，决定管理按钮显隐
 watch(() => store.currentId, (id) => {
   // store.create()/open() 更新 currentId 后同步交互层（首次初始化跳过，上面已处理）
@@ -159,8 +160,8 @@ watch(sessionId, () => nextTick(() => { if (chatArea.value) chatArea.value.scrol
         </template>
 
         <div v-else class="empty-state">
-          <div class="big">问问 Agent</div>
-          <div class="desc">小说语义问答（RAG）· 阅读数据分析 · 报告生成</div>
+          <div class="big">问渠 Agent</div>
+          <div class="desc">知识库语义问答（RAG）· 阅读数据分析 · 报告生成</div>
           <div class="quick">
             <button v-for="q in QUICK_QUESTIONS" :key="q" @click="chat.send(q)">{{ q }}</button>
           </div>

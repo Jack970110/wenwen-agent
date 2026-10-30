@@ -1,10 +1,10 @@
 {
   "mcpServers": {
-    "wenwen-data": {
+    "wenqu-data": {
       "type": "stdio",
       "command": "/Users/wangjianping/work/my/wenwen-agent/node_modules/.bin/tsx",
       "args": ["/Users/wangjianping/work/my/wenwen-agent/src/mcp-server.ts"],
-      "description": "问问 Agent 的网文数据工具：章节查询 / 趋势分析 / 报告生成"
+      "description": "问渠 Agent 的网文数据工具：章节查询 / 趋势分析 / 报告生成"
     }
   }
 }

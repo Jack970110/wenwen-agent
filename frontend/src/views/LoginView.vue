@@ -38,7 +38,7 @@ function onKeydown(e: KeyboardEvent) {
 <template>
   <div class="login-page">
     <div class="card">
-      <h1>问问 Agent</h1>
+      <h1>问渠 Agent</h1>
       <p>私有部署站点，管理员登录</p>
       <input v-model="username" type="text" placeholder="用户名" autofocus @keydown="onKeydown">
       <input v-model="password" type="password" placeholder="密码" @keydown="onKeydown">
