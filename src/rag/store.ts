@@ -84,6 +84,12 @@ export function deleteStaleIngestNovels(): number {
 }
 
 /** 游客只见公开演示库；管理员见全部（meta 为 JSON 字符串，调用方自行解析） */
+/** 游客只见公开演示库；管理员见全部（meta 为 JSON 字符串，调用方自行解析） */
+export function setNovelOwner(novelId: string, owner: 'public' | 'admin'): boolean {
+  const r = db.prepare('UPDATE novels SET owner = ? WHERE id = ?').run(owner, novelId);
+  return r.changes > 0;
+}
+
 export function listNovels(viewer: 'admin' | 'guest'): { id: string; title: string; owner: string; status: string; chunkCount: number; meta: string | null }[] {
   const where = viewer === 'guest' ? "WHERE n.owner = 'public'" : '';
   return db.prepare(`

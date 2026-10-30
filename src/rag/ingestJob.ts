@@ -127,7 +127,15 @@ async function runJob(job: IngestJob, rawText: string, chunkOpts: ChunkOptions) 
     saveNovelMetaFromChunks(novelId, chunks);
     setNovelStatus(novelId, 'ready');
     job.status = 'done';
-    ingestLog.info({ novel: job.title, embedMs: Date.now() - tChunk, summaryMs: Date.now() - tVec, totalMs: Date.now() - t0 }, '入库完成');
+    ingestLog.info(
+      {
+        novel: job.title,
+        embedMs: tVec - tChunk,
+        summaryMs: Date.now() - tVec,
+        totalMs: Date.now() - t0,
+      },
+      '入库完成',
+    );
   } catch (err) {
     // 失败回滚：不留半截数据
     if (job.novelId) deleteNovel(job.novelId);

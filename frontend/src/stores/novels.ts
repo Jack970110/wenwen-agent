@@ -6,6 +6,7 @@ export interface NovelItem {
   title: string;
   chunkCount: number;
   status?: string; // ingesting = 入库中（列表显示进度占位）
+  owner?: string; // 'public' = 公开（游客可见）/'admin' = 私有
 }
 
 /** 进行中的入库任务：持久化到 localStorage，关弹窗/刷新页面后进度继续显示 */
@@ -124,5 +125,12 @@ export const useNovelStore = defineStore('novels', () => {
     await refresh();
   }
 
-  return { list, uploadError, ingestError, activeJob, refresh, upload, resume, remove };
+  /** 公开/私有切换（管理员）：public = 游客可见可问答 */
+  async function setOwner(id: string, owner: 'public' | 'admin') {
+    const res = await fetch(`/api/novels/${id}/owner`, { method: 'PATCH', body: JSON.stringify({ owner }) });
+    if (!res.ok) throw new Error((await res.json()).error || `HTTP ${res.status}`);
+    await refresh();
+  }
+
+  return { list, uploadError, ingestError, activeJob, refresh, upload, resume, remove, setOwner };
 });

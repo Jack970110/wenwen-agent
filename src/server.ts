@@ -9,7 +9,7 @@ import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { runAgent, type FocusInfo } from './agent.js';
 import { appendMessage, checkChatLimits, claimGuestSessions, cleanupStaleGuestSessions, createSession, deleteSession, getMessages, getSessionFocus, getSessionMeta, listSessions, sessionExists, setSessionFocus, type StoredMessage } from './db.js';
 import { chunkNovel } from './rag/chunker.js';
-import { listNovels, deleteNovel, getNovelByTitle, getNovelMeta, getNovelFullText, getNovelBookSummary, backfillAllMissingMeta } from './rag/store.js';
+import { listNovels, deleteNovel, getNovelByTitle, getNovelMeta, getNovelFullText, getNovelBookSummary, backfillAllMissingMeta, setNovelOwner } from './rag/store.js';
 import { getJob, startIngestJob } from './rag/ingestJob.js';
 import { contentHash, deleteStaleIngestNovels, findNovelByContentHash } from './rag/store.js';
 import { determineTier } from './rag/tier.js';
@@ -445,6 +445,16 @@ app.get('/api/novels/jobs/:id', (c: Context) => {
 app.delete('/api/novels/:id', (c: Context) => {
   if (!c.get('isAdmin')) return c.json({ error: '需要管理员权限', needLogin: true }, 401);
   return c.json({ ok: deleteNovel(c.req.param('id') as string) });
+});
+
+/** 公开/私有切换：公开后游客可在演示库中检索问答 */
+app.patch('/api/novels/:id/owner', async (c: Context) => {
+  if (!c.get('isAdmin')) return c.json({ error: '需要管理员权限', needLogin: true }, 401);
+  const { owner } = (await c.req.json()) as { owner?: string };
+  if (owner !== 'public' && owner !== 'admin') return c.json({ error: "owner 只能是 'public' 或 'admin'" }, 400);
+  const ok = setNovelOwner(c.req.param('id') as string, owner);
+  if (!ok) return c.json({ error: '文档不存在' }, 404);
+  return c.json({ ok: true, owner });
 });
 
 // 静态托管前端构建产物（必须放在 API 路由之后）

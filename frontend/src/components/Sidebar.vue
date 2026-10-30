@@ -14,6 +14,13 @@ const progressPct = computed(() => {
   return j && j.total > 0 ? Math.round((j.embedded / j.total) * 100) : 0;
 });
 
+function removeNovel(n: { id: string; title: string }) {
+  // 删除不可恢复（向量/摘要/梗概一并清掉），必须有二次确认
+  if (window.confirm(`确定删除《${n.title}》？全部向量与摘要将一并删除，不可恢复。`)) {
+    novelStore.remove(n.id);
+  }
+}
+
 onMounted(() => novelStore.resume());
 </script>
 
@@ -72,7 +79,15 @@ onMounted(() => novelStore.resume());
           <i v-if="n.status === 'ingesting'">入库中…</i>
           <i v-else>{{ n.chunkCount }}块</i>
         </span>
-        <button v-if="isAdmin" class="del" title="删除文档" @click.stop="novelStore.remove(n.id)">✕</button>
+        <span class="ops" v-if="isAdmin">
+          <button
+            class="pub"
+            :class="{ on: n.owner === 'public' }"
+            :title="n.owner === 'public' ? '公开中（游客可见），点击取消公开' : '点击公开，游客即可体验该知识库'"
+            @click.stop="novelStore.setOwner(n.id, n.owner === 'public' ? 'admin' : 'public')"
+          >{{ n.owner === 'public' ? '取消公开' : '公开' }}</button>
+          <button class="del" title="删除该知识库" @click.stop="removeNovel(n)">删除</button>
+        </span>
       </div>
       <div v-if="!isAdmin" class="empty guest-tip">体验版仅含演示文档</div>
     </div>
@@ -116,6 +131,15 @@ onMounted(() => novelStore.resume());
 }
 .add:hover { color: var(--accent); border-color: var(--accent); }
 .session-item.novel .title i { font-style: normal; font-size: 11px; opacity: .6; margin-left: 4px; }
+.ops { display: none; align-items: center; gap: 4px; flex-shrink: 0; }
+.session-item:hover .ops { display: flex; }
+.ops .pub, .ops .del {
+  border: none; border-radius: 5px; padding: 2px 6px;
+  background: transparent; color: var(--dim); cursor: pointer; font-size: 11px; white-space: nowrap;
+}
+.ops .pub.on { color: var(--accent2); }
+.ops .pub:hover { color: var(--accent); }
+.ops .del:hover { color: var(--err); background: rgba(248,113,113,.12); }
 .ingest-progress {
   margin: 4px 8px 8px; padding: 8px 10px;
   background: var(--panel2); border: 1px solid var(--border); border-radius: 8px;
