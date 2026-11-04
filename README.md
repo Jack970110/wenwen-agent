@@ -12,9 +12,12 @@
 ┌───────────────────────────────▼───────────────────────────────────────┐
 │                        Node 服务端 (Hono + TS)                        │
 │  ┌─ Agent Loop (AI SDK) ── stopWhen 护栏 + 滑窗上下文 + 断连取消       │
-│  ├─ 工具层: queryChapters / analyzeTrend / generateReport / searchNovel│
+│  ├─ 工具层: searchNovel / getNovelInfo / queryChapters / analyzeTrend │
+│  │           / generateReport                                        │
 │  ├─ 两阶段深度模式: 快模型检索 → Z1 纯推理合成（思维链）               │
-│  ├─ RAG: 章节感知切块 → bge-m3 向量 → 余弦召回 → rerank 精排           │
+│  ├─ RAG: 多级摘要(章/段/全书梗概) + 向量召回 + rerank 精排             │
+│  │        + T4 查询分解多路检索                                       │
+│  ├─ pino 结构化日志: 模块子 logger + requestId + 分级过滤             │
 │  ├─ MCP Server: stdio（宿主接入）+ HTTP（远程接入）双传输              │
 │  └─ 会话隔离(游客/管理员) + 日限额/IP限频 + 错误分类降级               │
 └───────────────────────────────┬───────────────────────────────────────┘
@@ -22,17 +25,20 @@
           SQLite(data卷) · 智谱 GLM · 硅基流动 bge-m3/reranker
 ```
 
-技术栈：Node.js + TypeScript + Vercel AI SDK + Vue3/Pinia/Vite + Hono + SQLite(node:sqlite) + MCP 官方 SDK
+技术栈：Node.js + TypeScript + Vercel AI SDK + Vue3/Pinia/Vite + Hono + SQLite(node:sqlite) + pino + MCP 官方 SDK
 
 ## 功能特性
 
 - **Agent 编排**：Agent loop + Function Calling 多工具自主路由；stopWhen 步数护栏；断连自动取消上游请求
 - **RAG 知识库问答**：双切块策略（小说走章节感知切块、文档走段落模式自动降级）、bge-m3 向量化、rerank 精排（命中率@1 58%→75%，评测集驱动）、回答标注文档名+章节/段落出处
+- **多级摘要体系**：章摘要/段落摘要与原文同池检索（全局问题命中摘要、细节问题命中原文），全书梗概聚焦时注入提示词——全书级问题（"讲了什么故事"）的答案锚点；T4 复杂问题先查询分解再多路检索
+- **入库管道**：Web 异步任务（全局进度卡片、断点状态持久化、并发上限防限流踩踏）、内容指纹去重、分段耗时日志、失败自动回滚 + 启动自愈清理僵尸任务；摘要批量生成（4 章/次调用 × 3 并发，433 章书约 20 分钟）
 - **深度思考**：三态路由（自动启发式/强制深度/强制快速）；两阶段架构——快模型检索、Z1 纯推理合成，思维链实时流式展示
 - **多模型路由**：免费模型池（glm-4-flash / glm-z1-flash），模型名配置化，限流自动重试与降级
 - **MCP 双传输**：同一工具能力以 Function Calling（进程内）与 MCP（stdio/HTTP）双通道暴露，接入 CodeBuddy/WorkBuddy 实测通过
-- **分级权限**：游客免登录体验（会话按访客隔离、只读演示知识库）+ 管理员账号（多管理员，环境变量配置）
-- **防薅护栏**：全站日限额 + 单 IP 限频 + 上传大小/格式校验 + 异步入库失败自动回滚
+- **分级权限**：游客免登录体验（会话按访客隔离、只读公开演示库）+ 管理员账号（多管理员，环境变量配置）+ 一键公开/私有切换
+- **防薅护栏**：全站日限额 + 单 IP 限频 + 上传大小/格式校验 + 内容指纹防重复上传 + 异步入库失败自动回滚
+- **可观测性**：pino 结构化日志（模块子 logger、requestId 贯穿、级别过滤），入库分段耗时打点到阶段
 - **容器化**：多阶段 Docker 构建，数据卷持久化，`docker compose up -d` 一条命令上线
 
 ## 快速开始
@@ -82,23 +88,30 @@ docker compose up -d   # 数据卷 ./data 持久化会话与向量
 src/
 ├── tools.ts            Function Calling 工具定义（zod 约束 + execute）
 ├── dataService.ts      业务逻辑层：协议无关，FC 与 MCP 共用
-├── agent.ts            Agent loop（模型路由 + stopWhen + 滑窗上下文）
-├── server.ts           Hono 服务：SSE 事件协议、分级权限、限流、静态托管
+├── agent.ts            Agent loop（模型路由 + stopWhen + 滑窗上下文 + 全书梗概注入）
+├── server.ts           Hono 服务：SSE 事件协议、分级权限、限流、requestId、静态托管
+├── logger.ts           pino 结构化日志（模块子 logger + 请求ID + 访问日志；开发 pretty / 生产 JSON）
 ├── auth.ts             多管理员 HMAC cookie 鉴权
 ├── db.ts               会话持久化（node:sqlite）+ 限额计数
 ├── rag/
-│   ├── chunker.ts      章节感知切块（元数据引用溯源的基础；支持自定义参数：块长/小块合并阈值/同章重叠/自定义边界正则；无章节标题的文档类文本自动降级为段落模式，前缀 [第N段] + 强制重叠）
+│   ├── chunker.ts      章节感知切块（支持自定义参数：块长/小块合并阈值/同章重叠/自定义边界正则；文档类文本自动降级段落模式）
 │   ├── embed.ts        bge-m3 向量化（429 指数退避重试）
 │   ├── rerank.ts       cross-encoder 精排（免费 API，失败自动降级）
-│   ├── retrieve.ts     统一检索入口：粗召回 → 精排
-│   ├── store.ts        向量存储（SQLite + 暴力余弦，块数上万再迁 pgvector）
-│   ├── ingestJob.ts    异步入库任务队列 + 进度
+│   ├── retrieve.ts     统一检索入口：粗召回 → 精排（T4 多路分解检索）
+│   ├── decompose.ts    T4 查询分解：复杂问题拆 2-3 个子问题（失败回退单路）
+│   ├── summaries.ts    多级摘要层：章摘要(level 1)/段落摘要(level 2)/全书梗概(book_summary)
+│   ├── summarize.ts    LLM 摘要调用（批量 4 章/次 + 占位词质量校验）
+│   ├── tier.ts         T1-T4 体量分级（阈值 env 可覆盖）
+│   ├── store.ts        向量存储（SQLite + 暴力余弦，块数上万再迁 pgvector）+ 结构元数据 + 指纹去重
+│   ├── ingestJob.ts    异步入库任务队列（状态机/分段耗时日志/并发上限/失败回滚）
+│   ├── util.ts         mapPool 并发池 + env 解析
 │   └── context.ts      AsyncLocalStorage 请求级检索边界
 ├── mcp-server.ts       MCP Server（stdio，宿主自动拉起）
 ├── mcp-http-server.ts  MCP Server（HTTP，无状态模式）
 └── mcp-register.ts     MCP 工具注册（双传输共享）
-frontend/               Vue3 + Pinia + Vite（useChatStream 统一 AI 交互层）
-scripts/                诊断脚本（切块/深度模式/MCP 协议验证）
+frontend/               Vue3 + Pinia + Vite（useChatStream 统一 AI 交互层 + 全局入库进度）
+scripts/                工具脚本：入库回填（backfill-summaries/gen-book-summary）、检索评测（eval-retrieval）、
+                        e2e 问答复现（e2e-qa，绕过浏览器直打 API）、结构与日志自检（check-*）
 data/                   数据卷：会话库 + 向量库 + 评测集 + 示例小说
 ```
 
@@ -113,7 +126,7 @@ T3 ✅ / T4 ✅ 已全部落地，流程见下方「入库 → 向量化 → 存
 | **T1 微型** | < 3 万字 | 仅存全文（不向量化） | **全量塞上下文**，跳过检索——零检索损耗 | 3 万字 ≈ 6 万 token，占 128K 上下文 ~15%，留足历史与回答空间 | ✅ 已实现 |
 | **T2 小型** | 3-20 万字 | 切块 + 向量化 | top3 + rerank | 全局问题开始需要检索，但单路向量够用 | ✅ 已实现 |
 | **T3 中型** | 20-100 万字 | + 章摘要层（level 1） | 两级路由：全局问题走摘要层定位、局部走原文 | 全局类问题（主题/人物弧线）的答案分散全书，单块检索必然失效 | ✅ 已实现（摘要层同池检索） |
-| **T4 大型** | > 100 万字 | + 卷摘要层（level 2）+ 查询分解 | 摘要多级路由 + pgvector 检索 | 检索延迟与摘要层自身规模同时到临界（见检索性能阶梯） | ✅ 已实现（pgvector 按性能阶梯触发迁移） |
+| **T4 大型** | > 100 万字 | + 段落摘要层（level 2）+ 查询分解 | 查询分解多路检索 + 多级摘要路由 | 检索延迟与摘要层自身规模同时到临界（见检索性能阶梯） | ✅ 已实现（pgvector 迁移按性能阶梯触发，未到阈值） |
 
 定级原则：**阈值是待校准的初值**（T1/T2 分界用「全量塞 vs 检索」的答对率对比实验校准）；分级确定后不随会话变化，保证行为可预测。
 
@@ -146,6 +159,9 @@ CLI（`npm run ingest`）与 Web 上传（`ingestJob.ts` 异步任务）走同�
           └───────────────────────┴───────────┬───────────┘
                                               ▼
                             saveNovelMetaFromChunks（结构元数据）
+                                              │
+                              T3/T4: generateBookSummary（全书梗概，
+                              不向量化，存 novels.book_summary）
                                               │
                                     失败自动回滚 deleteNovel
                                     （不留半截数据）
@@ -180,6 +196,10 @@ CLI（`npm run ingest`）与 Web 上传（`ingestJob.ts` 异步任务）走同�
 - [ ] **联网问答（搁置中）**：阿里云搜索 MCP（2000次/月免费，中文尚可）首选，包成 webSearch 工具接入；接入后计入全站日限额
 - [x] **层级摘要**：chunks 表升级多级节点（level 0 原文 / 1 章摘要 / 2 段落摘要），摘要向量化入库同池检索；全书摘要不向量化、聚焦时注入提示词（设计要点见「体量分级标准」章节）
 - [x] 会话绑定小说（检索范围随会话持久化，游客仅限公开演示库）
+- [x] **结构化日志（pino）**：模块子 logger + requestId 贯穿 + 级别过滤；开发 pretty / 生产 JSON（12-factor，收集交给部署层）
+- [x] **知识库管理交互**：一键公开/私有切换（游客演示库即时生效）、删除二次确认、全局入库进度
+- [ ] **同书不同副本检测**：内容指纹只拦完全相同文件，同一本书换行符差异的副本会重复入库——书名重复时提示确认
+- [ ] **摘要层增量重生成**：当前批处理一次性生成（对齐 VikingDB 的增量演化能力）；被内容过滤跳过的章支持定向补跑
 - [ ] 大文件上传体验优化（分片）
 
 ## 免费模型清单（零成本运行）
