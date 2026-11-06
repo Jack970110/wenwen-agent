@@ -223,8 +223,14 @@ export function insertChunks(novelId: string, chunks: (NovelChunk & { vector: nu
   }
 }
 
-export function getNovelByTitle(title: string): { id: string; title: string; owner: string } | undefined {
-  return db.prepare('SELECT id, title, owner FROM novels WHERE title = ?').get(title) as
+/** 某本小说的全部原文块（level 0，按块序）：文本统计等批量消费场景用（不带向量，省解析开销） */
+export function getChapterTextRows(novelId: string): { chapter: string; text: string }[] {
+  return db
+    .prepare("SELECT chapter, text FROM chunks WHERE novel_id = ? AND level = 0 ORDER BY idx")
+    .all(novelId) as { chapter: string; text: string }[];
+}
+
+export function getNovelByTitle(title: string): { id: string; title: string; owner: string } | undefined {  return db.prepare('SELECT id, title, owner FROM novels WHERE title = ?').get(title) as
     | { id: string; title: string; owner: string }
     | undefined;
 }

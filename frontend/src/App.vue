@@ -6,12 +6,16 @@ import Sidebar from './components/Sidebar.vue';
 import MessageBubble from './components/MessageBubble.vue';
 import ToolLine from './components/ToolLine.vue';
 import ChatInput from './components/ChatInput.vue';
+import AnalysisView from './views/AnalysisView.vue';
 import { useNovelStore } from './stores/novels';
 import { fetchMe } from './stores/me';
 import LoginView from './views/LoginView.vue';
 
 const store = useSessionStore();
 const novelStore = useNovelStore();
+/** 一级视图：chat = 知识库问答，analysis = 数据分析工作台（两者是独立工作流） */
+const viewMode = ref<'chat' | 'analysis'>('chat');
+function onView(v: string) { viewMode.value = v === 'analysis' ? 'analysis' : 'chat'; }
 const sessionId = ref('');
 /** 会话级聚焦小说：绑定在会话上（存库），切回来自动恢复；空 = 全库检索 */
 const focusNovel = ref('');
@@ -127,8 +131,11 @@ watch(sessionId, () => nextTick(() => { if (chatArea.value) chatArea.value.scrol
   <LoginView v-if="isLoginRoute" @success="onLoginSuccess" />
 
   <div v-else class="app">
-    <Sidebar @select="onSelect" />
-    <main>
+    <Sidebar :view="viewMode" @select="onSelect" @view="onView" />
+
+    <!-- 数据分析工作台：独立页面，有自己的数据源和任务流 -->
+    <AnalysisView v-if="viewMode === 'analysis'" />
+    <main v-else>
       <header>
         <div class="page-title">{{ store.list.find(s => s.id === sessionId)?.title || '新对话' }}</div>
         <div class="header-right">

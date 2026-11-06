@@ -1,13 +1,21 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { useSessionStore } from '../stores/sessions';
 import { useNovelStore } from '../stores/novels';
+import { useTaskStore, type Task } from '../stores/tasks';
+import { useAnalysisStore } from '../stores/analysis';
 import { fetchMe, isAdmin, logout, username } from '../stores/me';
 import NovelUploadModal from './NovelUploadModal.vue';
+import ImportDatasetModal from './ImportDatasetModal.vue';
 
 const sessionStore = useSessionStore();
 const novelStore = useNovelStore();
+const taskStore = useTaskStore();
+const analysisStore = useAnalysisStore();
 const uploadOpen = ref(false);
+
+const props = defineProps<{ view?: string }>();
+defineEmits<{ (e: 'select', id: string): void; (e: 'view', v: string): void }>();
 
 const progressPct = computed(() => {
   const j = novelStore.activeJob;
@@ -21,6 +29,38 @@ function removeNovel(n: { id: string; title: string }) {
   }
 }
 
+const TASK_STATUS: Record<string, string> = { running: '运行中', done: '已完成', failed: '失败', cancelled: '已取消' };
+const TASK_ICON: Record<string, string> = { running: '⏳', done: '📄', failed: '⚠️', cancelled: '🚫' };
+
+function taskPct(t: Task): number {
+  const done = t.steps.filter((s) => s.status === 'done').length;
+  return Math.round((done / Math.max(t.steps.length, 1)) * 100);
+}
+
+/** 按来源 tab 发起对应剧本：dataset→阅读数据分析；novel→小说文本分析 */
+async function createAnalysis() {
+  if (taskStore.running) return;
+  if (analysisStore.sourceTab === 'novel') {
+    if (!analysisStore.selectedNovel) return;
+    await taskStore.create('novelAnalysis', {
+      novelTitle: analysisStore.selectedNovel,
+      datasetName: analysisStore.novelDataset || undefined,
+    });
+  } else {
+    if (!analysisStore.selectedSource) return;
+    await taskStore.create('dataAnalysis', { novelTitle: analysisStore.selectedSource });
+  }
+}
+
+/** 切到分析视图时拉数据源和任务列表（视图区内容随 view 切换） */
+async function loadAnalysis() {
+  if (props.view === 'analysis') {
+    taskStore.refresh();
+    analysisStore.loadSources();
+  }
+}
+watch(() => props.view, loadAnalysis);
+
 onMounted(() => novelStore.resume());
 </script>
 
@@ -33,11 +73,18 @@ onMounted(() => novelStore.resume());
         <div class="sub">知识库问答 · 数据分析</div>
       </div>
     </div>
-    <button class="new-chat" @click="sessionStore.create()">＋ 新对话</button>
-    <div class="section-label">
-      对话记录
+    <!-- 一级导航：两种独立工作流——问答在对话里，数据/报告在分析页 -->
+    <div class="nav">
+      <button :class="{ active: view !== 'analysis' }" @click="$emit('view', 'chat')">💬 对话</button>
+      <button :class="{ active: view === 'analysis' }" @click="$emit('view', 'analysis')">📊 数据分析</button>
     </div>
-    <div class="session-list">
+    <!-- 视图区：内容随一级导航切换（chat=对话记录+知识库；analysis=数据源+任务列表） -->
+    <template v-if="view !== 'analysis'">
+      <button class="new-chat" @click="sessionStore.create()">＋ 新对话</button>
+      <div class="section-label">
+        对话记录
+      </div>
+      <div class="session-list">
       <div
         v-for="s in sessionStore.list"
         :key="s.id"
@@ -90,7 +137,95 @@ onMounted(() => novelStore.resume());
         </span>
       </div>
       <div v-if="!isAdmin" class="empty guest-tip">体验版仅含演示文档</div>
-    </div>
+      </div>
+    </template>
+
+    <!-- 分析视图区：数据源/知识库 + 任务列表（与右侧 AnalysisView 详情页共用 store） -->
+    <template v-else>
+      <div class="session-list">
+        <!-- 来源切换：两类剧本的分析对象不同——阅读数据走数据集，文本分析走知识库 -->
+        <div class="source-tabs">
+          <button :class="{ active: analysisStore.sourceTab === 'dataset' }" @click="analysisStore.sourceTab = 'dataset'">📈 数据源</button>
+          <button :class="{ active: analysisStore.sourceTab === 'novel' }" @click="analysisStore.sourceTab = 'novel'">📖 知识库</button>
+        </div>
+
+        <template v-if="analysisStore.sourceTab === 'dataset'">
+          <div class="section-label novel-label">
+            阅读数据集
+            <button v-if="isAdmin" class="add" title="上传 CSV 数据" @click="analysisStore.importOpen = true">＋</button>
+          </div>
+          <div
+            v-for="d in analysisStore.sources"
+            :key="d.id"
+            class="session-item"
+            :class="{ active: d.name === analysisStore.selectedSource }"
+            @click="analysisStore.selectedSource = d.name"
+          >
+            <span class="title">{{ d.name }}</span>
+            <span class="ops" v-if="isAdmin">
+              <i class="rows">{{ d.rowCount }}行</i>
+              <button
+                class="pub"
+                :class="{ on: d.owner === 'public' }"
+                :title="d.owner === 'public' ? '公开中，点击取消' : '点击公开给其他管理员'"
+                @click.stop="analysisStore.toggleOwner(d)"
+              >{{ d.owner === 'public' ? '取消公开' : '公开' }}</button>
+              <button class="del" title="删除数据集" @click.stop="analysisStore.removeDataset(d.id)">删除</button>
+            </span>
+          </div>
+          <div v-if="!analysisStore.sources.length" class="empty">暂无数据源</div>
+        </template>
+
+        <template v-else>
+          <div class="section-label novel-label">知识库小说</div>
+          <div
+            v-for="n in novelStore.list"
+            :key="n.id"
+            class="session-item"
+            :class="{ active: n.title === analysisStore.selectedNovel }"
+            @click="analysisStore.selectedNovel = n.title"
+          >
+            <span class="title">📖 {{ n.title }}</span>
+            <span class="ops"><i class="rows">{{ n.chunkCount }}块</i></span>
+          </div>
+          <div v-if="!novelStore.list.length" class="empty">知识库为空</div>
+          <!-- 可选关联阅读数据集：'' = 自动匹配（唯一候选才采用），匹配不到纯文本分析 -->
+          <div v-if="analysisStore.selectedNovel && analysisStore.sources.length" class="ds-link">
+            <label>关联阅读数据（可选）</label>
+            <select v-model="analysisStore.novelDataset">
+              <option value="">自动匹配</option>
+              <option v-for="d in analysisStore.sources" :key="d.id" :value="d.name">{{ d.name }}</option>
+            </select>
+          </div>
+        </template>
+
+        <button
+          v-if="isAdmin"
+          class="create-btn"
+          :disabled="(!analysisStore.selectedSource && analysisStore.sourceTab === 'dataset') || (!analysisStore.selectedNovel && analysisStore.sourceTab === 'novel') || !!taskStore.running"
+          :title="taskStore.running ? '已有任务在运行中' : ''"
+          @click="createAnalysis"
+        >{{ taskStore.running ? '任务运行中…' : '＋ 生成分析报告' }}</button>
+
+        <div class="section-label novel-label">分析任务</div>
+        <div
+          v-for="t in taskStore.list"
+          :key="t.id"
+          class="session-item"
+          :class="{ active: t.id === taskStore.selectedId }"
+          @click="taskStore.select(t.id)"
+        >
+          <span class="title">{{ TASK_ICON[t.status] }} {{ t.title }}</span>
+          <span class="ops">
+            <i class="rows">{{ TASK_STATUS[t.status] }}{{ t.status === 'running' ? ` ${taskPct(t)}%` : '' }}</i>
+            <button v-if="t.status === 'running'" class="del" title="取消任务" @click.stop="taskStore.cancel(t.id)">✕</button>
+          </span>
+        </div>
+        <div v-if="!taskStore.list.length" class="empty">暂无分析任务</div>
+        <div v-if="!isAdmin" class="empty guest-tip">长任务与数据导入仅管理员可用</div>
+      </div>
+      <ImportDatasetModal :open="analysisStore.importOpen" :existing-names="analysisStore.sources.map(d => d.name)" @close="analysisStore.importOpen = false" @imported="analysisStore.loadSources()" />
+    </template>
 
     <!-- 身份区：游客给管理员登录入口；管理员显示身份和退出 -->
     <div class="identity">
@@ -168,6 +303,12 @@ onMounted(() => novelStore.resume());
 }
 .name { font-weight: 600; }
 .sub { font-size: 12px; color: var(--dim); }
+.nav { display: flex; gap: 6px; margin: 0 12px 10px; }
+.nav button {
+  flex: 1; padding: 8px 0; border-radius: 8px; font-size: 13px; cursor: pointer;
+  border: 1px solid var(--border); background: transparent; color: var(--dim);
+}
+.nav button.active { background: var(--panel2); color: var(--text); border-color: var(--accent2); }
 .new-chat {
   margin: 0 12px 14px; padding: 9px; border: 1px dashed var(--border); border-radius: 8px;
   background: transparent; color: var(--text); cursor: pointer; transition: border-color .15s;
@@ -189,4 +330,24 @@ onMounted(() => novelStore.resume());
 .session-item:hover .del { display: block; }
 .del:hover { color: var(--err); background: rgba(248,113,113,.12); }
 .empty { color: var(--dim); font-size: 12px; text-align: center; padding: 20px 0; }
+/* 分析视图区：复用 session-item，仅补数据源/任务的小字与创建按钮 */
+.ops .rows { font-style: normal; font-size: 11px; opacity: .7; white-space: nowrap; }
+.source-tabs { display: flex; gap: 4px; margin: 2px 4px 8px; }
+.source-tabs button {
+  flex: 1; padding: 6px 0; border-radius: 7px; font-size: 12px; cursor: pointer;
+  border: 1px solid var(--border); background: transparent; color: var(--dim);
+}
+.source-tabs button.active { background: var(--panel2); color: var(--text); border-color: var(--accent2); }
+.ds-link { margin: 6px 4px 0; }
+.ds-link label { display: block; font-size: 11px; color: var(--dim); margin-bottom: 3px; }
+.ds-link select {
+  width: 100%; padding: 6px 8px; border-radius: 7px; font-size: 12px;
+  border: 1px solid var(--border); background: var(--panel2); color: var(--text);
+}
+.create-btn {
+  margin: 10px 4px 4px; padding: 9px; border-radius: 8px; font-size: 13px; cursor: pointer;
+  border: 1px dashed var(--accent2); background: transparent; color: var(--accent2);
+}
+.create-btn:hover:not(:disabled) { background: rgba(139,108,255,.1); }
+.create-btn:disabled { opacity: .45; cursor: not-allowed; }
 </style>

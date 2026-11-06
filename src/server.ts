@@ -457,10 +457,143 @@ app.patch('/api/novels/:id/owner', async (c: Context) => {
   return c.json({ ok: true, owner });
 });
 
+/* ==================== 长任务 API ====================
+ * 与 /api/chat 的本质区别：受理即返回（202），过程/产物走轮询。
+ * 任务按身份隔离（同会话的 owner 规则）。
+ */
+import { cancelTask, getTask, listTasks, startTask } from './tasks/runner.js';
+import { seedBuiltinDatasets, listDatasets } from './datasets/store.js';
+import { autoMap, parseDataFile, normalize, FIELD_LABEL, FIELDS, type Mapping } from './datasets/parse.js';
+import { createDatasetRow, deleteDatasetRow, insertChapterStats, findDatasetByName, getDatasetRow, updateDatasetRowCount, countChapterStats, setDatasetOwner } from './db.js';
+import { randomUUID } from 'node:crypto';
+
+/** 受理长任务：body { type, params? }，type 目前支持 dataAnalysis */
+app.post('/api/tasks', async (c: Context) => {
+  const { type, params } = (await c.req.json()) as { type?: string; params?: Record<string, unknown> };
+  if (!type) return c.json({ error: 'type 必填' }, 400);
+  const owner = c.get('adminUser') || (c.get('visitorId') as string);
+  try {
+    const task = startTask(type, owner, params ?? {});
+    return c.json(task, 202);
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : '任务启动失败' }, 400);
+  }
+});
+
+app.get('/api/tasks', (c: Context) => {
+  const owner = c.get('adminUser') || (c.get('visitorId') as string);
+  return c.json(listTasks(owner));
+});
+
+/* ==================== 数据集（阅读数据上传/管理）====================
+ * 全部管理员可用（游客不开放上传与查看——长任务同权限）。
+ * 两段式：/preview 解析+自动映射+校验（不落库），/api/datasets 正式导入。
+ */
+const CSV_MAX_ROWS = 2000;
+
+app.get('/api/tasks/datasources', (c: Context) => {
+  const owner = c.get('adminUser') || (c.get('visitorId') as string);
+  return c.json(listDatasets(owner).map((d) => ({ id: d.id, name: d.name, rowCount: d.rowCount, owner: d.owner })));
+});
+
+/** 预览：解析 CSV，返回自动映射 + 样例行 + 校验结果（不落库） */
+app.post('/api/datasets/preview', async (c: Context) => {
+  if (!c.get('isAdmin')) return c.json({ error: '需要管理员权限', needLogin: true }, 401);
+  const body = await c.req.parseBody();
+  const file = body.file as File | undefined;
+  if (!file) return c.json({ error: '缺少 file 字段' }, 400);
+  if (file.size > 2 * 1024 * 1024) return c.json({ error: '文件超过 2MB 上限' }, 400);
+
+  const rows = parseDataFile(await file.arrayBuffer(), file.name);
+  if (rows.length < 2) return c.json({ error: '文件没有数据行（首行为表头）' }, 400);
+  const headers = rows[0];
+  const mapping = autoMap(headers);
+  const result = normalize(rows, mapping, { maxRows: CSV_MAX_ROWS });
+  return c.json({
+    headers,
+    mapping,
+    fieldLabels: FIELD_LABEL,
+    rowCount: result.rows.length,
+    sample: rows.slice(1, 6),
+    warnings: result.warnings.slice(0, 20),
+    errors: result.errors.slice(0, 20),
+  });
+});
+
+/** 导入：带确认后的映射重新解析落库（文件 ≤2MB，同步完成无需任务化） */
+app.post('/api/datasets', async (c: Context) => {
+  if (!c.get('isAdmin')) return c.json({ error: '需要管理员权限', needLogin: true }, 401);
+  const body = await c.req.parseBody();
+  const file = body.file as File | undefined;
+  const name = String(body.name ?? '').trim();
+  let mapping: Mapping;
+  try {
+    mapping = JSON.parse(String(body.mapping ?? '{}'));
+  } catch {
+    return c.json({ error: 'mapping 不是合法 JSON' }, 400);
+  }
+  if (!file || !name) return c.json({ error: 'file 和 name 必填' }, 400);
+
+  const rows = parseDataFile(await file.arrayBuffer(), file.name);
+  const result = normalize(rows, mapping, { maxRows: CSV_MAX_ROWS });
+  if (result.errors.length) return c.json({ error: `校验失败：${result.errors[0]}`, errors: result.errors.slice(0, 20) }, 400);
+  if (!result.rows.length) return c.json({ error: '没有有效数据行' }, 400);
+
+  const owner = c.get('adminUser') || (c.get('visitorId') as string);
+  // 同名数据集（且归当前用户）= 增量更新：按 chapter_id upsert，不新建
+  const existing = findDatasetByName(name);
+  if (existing && existing.owner === owner) {
+    insertChapterStats(existing.id, result.rows);
+    updateDatasetRowCount(existing.id, countChapterStats(existing.id));
+    return c.json({ id: existing.id, name, rowCount: result.rows.length, updated: true, warnings: result.warnings.slice(0, 20) }, 200);
+  }
+  if (existing) return c.json({ error: `已存在同名数据集「${name}」（他人创建），请换一个名字` }, 409);
+
+  const id = `DS-${randomUUID().slice(0, 8).toUpperCase()}`;
+  createDatasetRow(id, name, owner, result.rows.length);
+  insertChapterStats(id, result.rows);
+  return c.json({ id, name, rowCount: result.rows.length, warnings: result.warnings.slice(0, 20) }, 201);
+});
+
+/** 公开/私有切换：公开后其他管理员及（未来）游客可见 */
+app.patch('/api/datasets/:id/owner', async (c: Context) => {
+  if (!c.get('isAdmin')) return c.json({ error: '需要管理员权限', needLogin: true }, 401);
+  const { owner } = (await c.req.json()) as { owner?: string };
+  if (owner !== 'public' && owner !== 'admin') return c.json({ error: "owner 只能是 'public' 或 'admin'" }, 400);
+  const id = c.req.param('id') as string;
+  const ds = getDatasetRow(id);
+  if (!ds) return c.json({ error: '数据集不存在' }, 404);
+  setDatasetOwner(id, owner);
+  return c.json({ ok: true, owner });
+});
+
+app.delete('/api/datasets/:id', (c: Context) => {
+  if (!c.get('isAdmin')) return c.json({ error: '需要管理员权限', needLogin: true }, 401);
+  const ok = deleteDatasetRow(c.req.param('id') as string);
+  if (!ok) return c.json({ error: '数据集不存在' }, 404);
+  return c.json({ ok: true });
+});
+
+app.get('/api/tasks/:id', (c: Context) => {
+  const owner = c.get('adminUser') || (c.get('visitorId') as string);
+  const task = getTask(c.req.param('id') as string, owner);
+  if (!task) return c.json({ error: '任务不存在' }, 404);
+  return c.json(task);
+});
+
+app.post('/api/tasks/:id/cancel', (c: Context) => {
+  const owner = c.get('adminUser') || (c.get('visitorId') as string);
+  const ok = cancelTask(c.req.param('id') as string, owner);
+  if (!ok) return c.json({ error: '任务不存在或已结束' }, 400);
+  return c.json(getTask(c.req.param('id') as string, owner));
+});
+
 // 静态托管前端构建产物（必须放在 API 路由之后）
 app.use('*', serveStatic({ root: './frontend/dist' }));
 // SPA 兜底：非 API 路径回退到 index.html
 app.get('*', serveStatic({ path: './frontend/dist/index.html' }));
+
+seedBuiltinDatasets(); // 内置演示数据集幂等 seed（启动执行一次）
 
 const port = Number(process.env.PORT) || 3001;
 serve({ fetch: app.fetch, port }, (info) => {
