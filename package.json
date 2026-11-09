@@ -18,6 +18,7 @@
     "ingest": "tsx src/ingest.ts",
     "eval": "tsx scripts/eval-retrieval.ts",
     "test:data": "tsx scripts/test-data-pipeline.ts",
+    "eval:e2e": "tsx scripts/eval-e2e.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
