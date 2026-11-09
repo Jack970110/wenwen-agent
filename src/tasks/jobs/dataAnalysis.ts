@@ -1,6 +1,7 @@
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { generateText } from 'ai';
 import { analyzeTrendData, queryChaptersData } from '../../dataService.js';
+import { findDatasetByName } from '../../datasets/store.js';
 import { getNovelByTitle } from '../../rag/store.js';
 import { retrieve } from '../../rag/retrieve.js';
 import { ragScope } from '../../rag/context.js';
@@ -22,7 +23,12 @@ const zhipu = createOpenAICompatible({
 
 /** 单个章节的归因笔记：限定在目标书的范围内检索原文；书未入库时明确说明 */
 async function attributeChapter(chapterTitle: string, novelTitle: string, signal: AbortSignal): Promise<string> {
-  const novel = getNovelByTitle(novelTitle);
+/** 数据集名 → 知识库小说：精确匹配失败后按归一化名再试（「绍宋-阅读数据」→「绍宋」） */
+function resolveNovel(name: string) {
+  return getNovelByTitle(name) ?? getNovelByTitle(name.replace(/(阅读数据|数据集|数据|阅读)/g, '').replace(/[-_—·\s]+/g, '').trim());
+}
+
+const novel = resolveNovel(novelTitle);
   if (!novel) return `（《${novelTitle}》未入库，跳过原文归因——报告仅基于数据结论）`;
   const query = `${chapterTitle} 情节 内容`;
   const results = await retrieve(query, 2, novel.id);
@@ -35,8 +41,12 @@ async function attributeChapter(chapterTitle: string, novelTitle: string, signal
 export async function runDataAnalysis(ctx: JobContext): Promise<string> {
   const novelTitle = (ctx.params.novelTitle as string) || '雪夜来客';
 
-    // 游客边界：剧本里直接调用检索时也走作用域（只扫公开库）
-    return ragScope.run({ onlyPublic: false, tier: 'T2' }, async () => {
+    // 游客边界：只许分析公开/自己的数据集，剧本内检索也走公开作用域
+    const ds = findDatasetByName(novelTitle);
+    if (ds && ctx.publicOnly && ds.owner !== 'public' && ds.owner !== ctx.owner) {
+      throw new Error('没有权限分析该数据集');
+    }
+    return ragScope.run({ onlyPublic: ctx.publicOnly, tier: 'T2' }, async () => {
     // ---- 步骤 1：获取章节阅读数据 ----
     await ctx.beginStep('获取章节阅读数据');
     if (ctx.signal.aborted) throw new Error('cancelled');

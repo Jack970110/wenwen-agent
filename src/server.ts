@@ -80,9 +80,16 @@ if (authEnabled()) {
   app.use('/api/*', async (c: Context, next) => {
     if (c.req.path === '/api/login' || c.req.path === '/api/me') return next();
     if (c.get('isAdmin')) return next();
-    // 游客可用：对话、会话（隔离到访客）、公开小说库读取；管理操作 401
-    const guestAllowed = ['/api/chat', '/api/sessions', '/api/novels'].some((p) => c.req.path.startsWith(p))
-      && !(c.req.method !== 'GET' && c.req.path.startsWith('/api/novels'));
+    // 游客可用：对话、会话（隔离到访客）、公开小说库读取、长任务体验（公开数据，剧本内 publicOnly 收紧）；
+    // 数据集上传/删除等管理操作 401
+    const TASKS = '/api/tasks';
+    const guestTasks = c.req.path === TASKS || c.req.path.startsWith(TASKS + '/')
+      ? c.req.method === 'GET' || (c.req.method === 'POST' && (c.req.path === TASKS || c.req.path.endsWith('/cancel')))
+      : false;
+    const guestAllowed = (
+      ['/api/chat', '/api/sessions'].some((p) => c.req.path.startsWith(p))
+      || (c.req.path.startsWith('/api/novels') && (c.req.method === 'GET' || c.req.path === '/api/novels/jobs'))
+    ) || guestTasks;
     if (guestAllowed) return next();
     return c.json({ error: '需要管理员权限', needLogin: true }, 401);
   });
@@ -470,18 +477,20 @@ app.patch('/api/novels/:id/owner', async (c: Context) => {
  * 任务按身份隔离（同会话的 owner 规则）。
  */
 import { cancelTask, getTask, listTasks, startTask } from './tasks/runner.js';
-import { seedBuiltinDatasets, listDatasets } from './datasets/store.js';
+import { seedBuiltinDatasets, seedShaosongDataset, listDatasets } from './datasets/store.js';
 import { autoMap, parseDataFile, normalize, FIELD_LABEL, FIELDS, type Mapping } from './datasets/parse.js';
 import { createDatasetRow, deleteDatasetRow, insertChapterStats, findDatasetByName, getDatasetRow, updateDatasetRowCount, countChapterStats, setDatasetOwner } from './db.js';
 import { randomUUID } from 'node:crypto';
 
-/** 受理长任务：body { type, params? }，type 目前支持 dataAnalysis */
+/** 受理长任务：body { type, params? }，type 支持 dataAnalysis / novelAnalysis。
+ * 游客可创建（体验公开数据），剧本内按 publicOnly 收紧可见性 */
 app.post('/api/tasks', async (c: Context) => {
   const { type, params } = (await c.req.json()) as { type?: string; params?: Record<string, unknown> };
   if (!type) return c.json({ error: 'type 必填' }, 400);
   const owner = c.get('adminUser') || (c.get('visitorId') as string);
+  const publicOnly = !c.get('isAdmin');
   try {
-    const task = startTask(type, owner, params ?? {});
+    const task = startTask(type, owner, params ?? {}, publicOnly);
     return c.json(task, 202);
   } catch (e) {
     return c.json({ error: e instanceof Error ? e.message : '任务启动失败' }, 400);
@@ -602,6 +611,7 @@ app.use('*', serveStatic({ root: './frontend/dist' }));
 app.get('*', serveStatic({ path: './frontend/dist/index.html' }));
 
 seedBuiltinDatasets(); // 内置演示数据集幂等 seed（启动执行一次）
+seedShaosongDataset(); // 《绍宋》合成阅读数据（游客冷启动；书未入库时静默跳过）
 
 const port = Number(process.env.PORT) || 3001;
 serve({ fetch: app.fetch, port }, (info) => {

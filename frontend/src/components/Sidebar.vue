@@ -200,7 +200,6 @@ onMounted(() => novelStore.resume());
         </template>
 
         <button
-          v-if="isAdmin"
           class="create-btn"
           :disabled="(!analysisStore.selectedSource && analysisStore.sourceTab === 'dataset') || (!analysisStore.selectedNovel && analysisStore.sourceTab === 'novel') || !!taskStore.running"
           :title="taskStore.running ? '已有任务在运行中' : ''"
@@ -222,7 +221,7 @@ onMounted(() => novelStore.resume());
           </span>
         </div>
         <div v-if="!taskStore.list.length" class="empty">暂无分析任务</div>
-        <div v-if="!isAdmin" class="empty guest-tip">长任务与数据导入仅管理员可用</div>
+        <div v-if="!isAdmin" class="empty guest-tip">游客可基于公开数据体验分析；上传数据与知识库管理需管理员登录</div>
       </div>
       <ImportDatasetModal :open="analysisStore.importOpen" :existing-names="analysisStore.sources.map(d => d.name)" @close="analysisStore.importOpen = false" @imported="analysisStore.loadSources()" />
     </template>

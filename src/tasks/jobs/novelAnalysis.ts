@@ -40,11 +40,14 @@ function compactSignals(s: TextSignals) {
 
 export async function runNovelAnalysis(ctx: JobContext): Promise<string> {
   const novelTitle = (ctx.params.novelTitle as string) || '';
+  // 游客边界：只许分析公开库的书（画像/读原文走直查，绕过检索作用域，必须在这里拦）
+  const target = getNovelByTitle(novelTitle);
+  if (target && ctx.publicOnly && target.owner !== 'public') throw new Error('没有权限分析该小说');
   // 交叉归因的数据集：UI 显式选择优先，没选则保守自动匹配（唯一候选才采用）
   const dataset = resolveDataset(novelTitle, ctx.owner, ctx.params.datasetName as string | undefined);
   const datasetName = dataset?.name;
 
-  return ragScope.run({ onlyPublic: false, tier: 'T2' }, async () => {
+  return ragScope.run({ onlyPublic: ctx.publicOnly, tier: 'T2' }, async () => {
     // ---- 步骤 1：文本画像（确定性统计）----
     await ctx.beginStep('生成文本画像');
     if (ctx.signal.aborted) throw new Error('cancelled');

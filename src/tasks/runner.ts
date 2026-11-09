@@ -18,6 +18,8 @@ export interface JobContext {
   taskId: string;
   /** 任务归属者（数据集等 owner 作用域资源的可见性判断用） */
   owner: string;
+  /** 游客创建的任务：剧本只允许访问公开书/公开数据集（防私有库越权） */
+  publicOnly: boolean;
   /** 用户取消 / 服务关闭时置位，剧本在每个步骤边界检查 */
   signal: AbortSignal;
   /** 把当前步骤标为 running 并落库 */
@@ -48,7 +50,7 @@ const JOBS: Record<string, { job: Job; title: string | ((params: Record<string, 
 /** 进程内的取消句柄：taskId → AbortController */
 const controllers = new Map<string, AbortController>();
 
-export function startTask(type: string, owner: string, params: Record<string, unknown> = {}): TaskRow {
+export function startTask(type: string, owner: string, params: Record<string, unknown> = {}, publicOnly = false): TaskRow {
   const spec = JOBS[type];
   if (!spec) throw new Error(`未知任务类型: ${type}（可用: ${Object.keys(JOBS).join(', ')}）`);
 
@@ -61,7 +63,7 @@ export function startTask(type: string, owner: string, params: Record<string, un
   controllers.set(id, controller);
 
   // 后台执行：受理即返回，进度走轮询。失败/取消都不抛出——状态已落库
-  void execute(id, type, spec, steps, owner, params, controller);
+  void execute(id, type, spec, steps, owner, params, controller, publicOnly);
   return getTaskRow(id, owner)!;
 }
 
@@ -73,12 +75,14 @@ async function execute(
   owner: string,
   params: Record<string, unknown>,
   controller: AbortController,
+  publicOnly: boolean,
 ) {
   let cursor = -1; // 当前正在执行的步骤下标
   const persist = () => updateTaskSteps(id, steps);
   const ctx: JobContext = {
     taskId: id,
     owner,
+    publicOnly,
     signal: controller.signal,
     params,
     async beginStep(name) {
