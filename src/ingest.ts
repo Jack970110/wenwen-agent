@@ -9,7 +9,7 @@ import { readFileSync } from 'node:fs';
 import { chunkNovel, type NovelChunk } from './rag/chunker.js';
 import { embed } from './rag/embed.js';
 import { buildSummaryLayer } from './rag/summaries.js';
-import { contentHash, createNovel, deleteNovel, findNovelByContentHash, insertChunks, listNovels, saveNovelMetaFromChunks, setNovelStatus } from './rag/store.js';
+import { contentHash, createNovel, deleteNovel, findNovelByContentHash, findNovelByTitle, insertChunks, listNovels, saveNovelMetaFromChunks, setNovelStatus } from './rag/store.js';
 import { determineTier } from './rag/tier.js';
 import { envPositive, mapPool } from './rag/util.js';
 import 'dotenv/config';
@@ -38,6 +38,12 @@ async function main() {
   const dup = findNovelByContentHash(hash);
   if (dup) {
     console.error(`❌ 该文件内容已入库（《${dup.title}》），无需重复入库`);
+    process.exit(1);
+  }
+  // 同名查重：格式差异的副本会绕过指纹，需 --yes 显式确认
+  if (findNovelByTitle(title) && !process.argv.includes('--yes')) {
+    console.error(`⚠️  已有同名文档《${title}》在库。同一本书换行符/格式差异的副本不会触发内容指纹查重，`);
+    console.error('    重复入库会造成问答/分析归因歧义（建议改名或先删除旧的）。确认是修正版请加 --yes 重新执行。');
     process.exit(1);
   }
   const chunks = chunkNovel(raw, chunkOpts);

@@ -11,7 +11,7 @@ import { appendMessage, checkChatLimits, claimGuestSessions, cleanupStaleGuestSe
 import { chunkNovel } from './rag/chunker.js';
 import { listNovels, deleteNovel, getNovelByTitle, getNovelMeta, getNovelFullText, getNovelBookSummary, backfillAllMissingMeta, setNovelOwner } from './rag/store.js';
 import { getJob, startIngestJob } from './rag/ingestJob.js';
-import { contentHash, deleteStaleIngestNovels, findNovelByContentHash } from './rag/store.js';
+import { contentHash, deleteStaleIngestNovels, findNovelByContentHash, findNovelByTitle } from './rag/store.js';
 import { determineTier } from './rag/tier.js';
 import { ragScope } from './rag/context.js';
 import { logger, chatLog, authLog } from './logger.js';
@@ -412,6 +412,14 @@ app.post('/api/novels', async (c: Context) => {
   // 指纹查重：同内容文件直接 409，不占用并发名额、不跑切块
   const dup = findNovelByContentHash(contentHash(raw));
   if (dup) return c.json({ error: `该文件内容已入库（《${dup.title}》），无需重复上传` }, 409);
+  // 同名查重：换行符/格式差异的副本会绕过指纹，提示确认后才放行（防问答归因歧义）
+  const sameTitle = findNovelByTitle(title);
+  if (sameTitle && String(body.confirm ?? '') !== '1') {
+    return c.json({
+      error: `已有同名文档《${title}》在库。同一本书格式有差异的副本不会触发内容指纹查重，重复入库会造成问答归因歧义（建议先删除旧的或换名）。若确认是修正版要重复入库，请在确认后重试。`,
+      needConfirm: true,
+    }, 409);
+  }
   // 可选切块参数（表单字段，不传走默认）：chunkSize / chunkMin / chunkOverlap
   const num = (v: unknown) => {
     const n = Number(v);

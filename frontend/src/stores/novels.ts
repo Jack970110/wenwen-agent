@@ -87,22 +87,27 @@ export const useNovelStore = defineStore('novels', () => {
     timer = null;
   }
 
-  /** 提交上传后立即返回（进度走全局看护，弹窗可随手关闭） */
-  async function upload(title: string, file: File): Promise<boolean> {
+  /** 提交上传后立即返回（进度走全局看护，弹窗可随手关闭）。
+   * 返回 'duplicate' = 同名文档已入库需要用户确认（confirm 传 true 重试） */
+  async function upload(title: string, file: File, confirm = false): Promise<'ok' | 'duplicate' | false> {
     uploadError.value = '';
     ingestError.value = '';
     try {
       const fd = new FormData();
       fd.append('title', title);
       fd.append('file', file);
+      if (confirm) fd.append('confirm', '1');
       const res = await fetch('/api/novels', { method: 'POST', body: fd });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      if (!res.ok) {
+        if (data.needConfirm) { uploadError.value = data.error || ''; return 'duplicate'; }
+        throw new Error(data.error || `HTTP ${res.status}`);
+      }
 
       activeJob.value = { jobId: data.jobId, title, stage: 'vectorizing', embedded: 0, total: 0 };
       localStorage.setItem(ACTIVE_KEY, JSON.stringify(activeJob.value));
       watchJob(data.jobId);
-      return true;
+      return 'ok';
     } catch (e: any) {
       uploadError.value = e.message || '上传失败';
       return false;

@@ -28,13 +28,18 @@ function onFileChange(e: Event) {
   if (!title.value) title.value = f.name.replace(/\.txt$/i, '');
 }
 
-async function doUpload() {
+async function doUpload(confirmDuplicate = false) {
   if (!title.value.trim() || !file.value) return;
   submitting.value = true;
-  const ok = await store.upload(title.value.trim(), file.value);
+  const result = await store.upload(title.value.trim(), file.value, confirmDuplicate);
   submitting.value = false;
+  // 同名文档已在库：换行符/格式差异的副本不会触发内容指纹查重，需用户确认
+  if (result === 'duplicate') {
+    if (window.confirm(`${store.uploadError}`)) await doUpload(true);
+    return;
+  }
   // 提交成功即关闭：向量化要几分钟，进度在左侧知识库全局展示，不要求用户守着弹窗
-  if (ok) emit('close');
+  if (result === 'ok') emit('close');
 }
 </script>
 
@@ -61,7 +66,7 @@ async function doUpload() {
 
       <div v-if="store.uploadError" class="msg err">{{ store.uploadError }}</div>
 
-      <button class="submit" :disabled="submitting || !title.trim() || !file" @click="doUpload">
+      <button class="submit" :disabled="submitting || !title.trim() || !file" @click="doUpload()">
         {{ submitting ? '提交中…' : '开始入库' }}
       </button>
       <div class="tip">入库 = 切块 → 向量化 → 存库；提交后可在左侧知识库查看进度，无需停留在弹窗</div>

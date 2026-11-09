@@ -68,6 +68,11 @@ export function findNovelByContentHash(hash: string): { id: string; title: strin
   return db.prepare('SELECT id, title FROM novels WHERE content_hash = ? LIMIT 1').get(hash) as { id: string; title: string } | undefined;
 }
 
+/** 同名查重（ready 状态）：内容指纹只拦完全相同文件，换行符/格式差异的副本靠这个提示 */
+export function findNovelByTitle(title: string): { id: string; title: string } | undefined {
+  return db.prepare("SELECT id, title FROM novels WHERE title = ? AND status = 'ready' LIMIT 1").get(title) as { id: string; title: string } | undefined;
+}
+
 /** 入库状态流转：ingesting（向量化中）→ ready；失败走 deleteNovel 回滚，无 error 态残留 */
 export function setNovelStatus(novelId: string, status: 'ingesting' | 'ready'): void {
   db.prepare('UPDATE novels SET status = ? WHERE id = ?').run(status, novelId);
