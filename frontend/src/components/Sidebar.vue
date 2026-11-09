@@ -70,13 +70,13 @@ onMounted(() => novelStore.resume());
       <div class="logo">问</div>
       <div>
         <div class="name">问渠 Agent</div>
-        <div class="sub">知识库问答 · 数据分析</div>
+        <div class="sub">知识库问答 · 分析</div>
       </div>
     </div>
     <!-- 一级导航：两种独立工作流——问答在对话里，数据/报告在分析页 -->
     <div class="nav">
       <button :class="{ active: view !== 'analysis' }" @click="$emit('view', 'chat')">💬 对话</button>
-      <button :class="{ active: view === 'analysis' }" @click="$emit('view', 'analysis')">📊 数据分析</button>
+      <button :class="{ active: view === 'analysis' }" @click="$emit('view', 'analysis')">📊 分析</button>
     </div>
     <!-- 视图区：内容随一级导航切换（chat=对话记录+知识库；analysis=数据源+任务列表） -->
     <template v-if="view !== 'analysis'">
@@ -145,7 +145,7 @@ onMounted(() => novelStore.resume());
       <div class="session-list">
         <!-- 来源切换：两类剧本的分析对象不同——阅读数据走数据集，文本分析走知识库 -->
         <div class="source-tabs">
-          <button :class="{ active: analysisStore.sourceTab === 'dataset' }" @click="analysisStore.sourceTab = 'dataset'">📈 数据源</button>
+          <button :class="{ active: analysisStore.sourceTab === 'dataset' }" @click="analysisStore.sourceTab = 'dataset'">📈 数据</button>
           <button :class="{ active: analysisStore.sourceTab === 'novel' }" @click="analysisStore.sourceTab = 'novel'">📖 知识库</button>
         </div>
 
