@@ -17,6 +17,7 @@
     "test:mcp:http": "tsx scripts/test-mcp-http.ts",
     "ingest": "tsx src/ingest.ts",
     "eval": "tsx scripts/eval-retrieval.ts",
+    "test:data": "tsx scripts/test-data-pipeline.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
