@@ -12,7 +12,8 @@ import 'dotenv/config';
 async function main() {
   const K = Number(process.argv[2]) || 3;
   const evalSet = JSON.parse(readFileSync('data/eval-set.json', 'utf-8'));
-  const cases: { q: string; expectChapter: string }[] = evalSet.cases;
+  // accept: 可选多答案数组——事件横跨多章（如连续上/中/下章）时命中任一即算过
+  const cases: { q: string; expectChapter: string; accept?: string[] }[] = evalSet.cases;
 
   console.log(`评测集 ${cases.length} 条，命中率@${K}：\n`);
 
@@ -20,11 +21,12 @@ async function main() {
   const details: string[] = [];
   for (const c of cases) {
     const results = await retrieve(c.q, K);
-    const hit = results.some((r) => r.chapter === c.expectChapter);
+    const expected = [c.expectChapter, ...(c.accept ?? [])];
+    const hit = results.some((r) => expected.includes(r.chapter));
     if (hit) hits++;
     const top1 = results[0] ? `${results[0].chapter}${results[0].reranked ? '' : '(未精排)'}` : '(空)';
     details.push(`${hit ? '✅' : '❌'} ${c.q}
-   期望: ${c.expectChapter} | top1: ${top1}${hit ? '' : `\n   召回: ${results.map((r) => r.chapter).join(', ')}`}`);
+   期望: ${c.expectChapter}${c.accept?.length ? `（或 ${c.accept.join(' / ')}）` : ''} | top1: ${top1}${hit ? '' : `\n   召回: ${results.map((r) => r.chapter).join(', ')}`}`);
   }
 
   details.forEach((d) => console.log(d + '\n'));
