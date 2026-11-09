@@ -58,9 +58,9 @@ const QUICK_QUESTIONS = [
 ];
 
 function onSelect(id: string) {
-  sessionId.value = id;
-  loadHistory();
-  restoreFocus(id);
+  // 只更新 store 的 currentId——下面的 watch(currentId) 统一同步 sessionId/loadHistory/restoreFocus。
+  // 之前这里直接改 sessionId 不动 store，导致侧栏高亮（判定用 store.currentId）永远停在第一条
+  store.open(id);
 }
 
 async function loadHistory() {
