@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue';
+import BeianFooter from '../components/BeianFooter.vue';
 
 const emit = defineEmits<{ (e: 'success'): void }>();
 
@@ -45,15 +46,17 @@ function onKeydown(e: KeyboardEvent) {
       <div class="err">{{ error || '&nbsp;' }}</div>
       <button :disabled="loading" @click="login">{{ loading ? '登录中…' : '进入' }}</button>
     </div>
+    <BeianFooter class="login-footer" />
   </div>
 </template>
 
 <style scoped>
 .login-page {
-  height: 100vh; display: flex; align-items: center; justify-content: center;
+  height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center;
   background: var(--bg); color: var(--text);
   font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
 }
+.login-footer { position: absolute; bottom: 0; left: 0; right: 0; }
 .card {
   width: 340px; max-width: calc(100vw - 40px);
   background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 28px;

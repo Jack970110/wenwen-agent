@@ -10,6 +10,7 @@ import AnalysisView from './views/AnalysisView.vue';
 import { useNovelStore } from './stores/novels';
 import { fetchMe } from './stores/me';
 import LoginView from './views/LoginView.vue';
+import BeianFooter from './components/BeianFooter.vue';
 
 const store = useSessionStore();
 const novelStore = useNovelStore();
@@ -131,11 +132,12 @@ watch(sessionId, () => nextTick(() => { if (chatArea.value) chatArea.value.scrol
   <LoginView v-if="isLoginRoute" @success="onLoginSuccess" />
 
   <div v-else class="app">
-    <Sidebar :view="viewMode" @select="onSelect" @view="onView" />
+    <div class="app-body">
+      <Sidebar :view="viewMode" @select="onSelect" @view="onView" />
 
-    <!-- 数据分析工作台：独立页面，有自己的数据源和任务流 -->
-    <AnalysisView v-if="viewMode === 'analysis'" />
-    <main v-else>
+      <!-- 数据分析工作台：独立页面，有自己的数据源和任务流 -->
+      <AnalysisView v-if="viewMode === 'analysis'" />
+      <main v-else>
       <header>
         <div class="page-title">{{ store.list.find(s => s.id === sessionId)?.title || '新对话' }}</div>
         <div class="header-right">
@@ -184,11 +186,14 @@ watch(sessionId, () => nextTick(() => { if (chatArea.value) chatArea.value.scrol
         @cycle-deep="deepMode = deepMode === 'auto' ? 'deep' : deepMode === 'deep' ? 'fast' : 'auto'"
       />
     </main>
+    </div>
+    <BeianFooter />
   </div>
 </template>
 
 <style scoped>
-.app { display: flex; height: 100vh; }
+.app { display: flex; flex-direction: column; height: 100vh; }
+.app-body { flex: 1; display: flex; min-height: 0; }
 main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 header {
   padding: 12px 20px; border-bottom: 1px solid var(--border);
