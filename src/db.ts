@@ -242,6 +242,10 @@ export function finishTaskRow(id: string, status: 'done' | 'failed' | 'cancelled
     .run(status, result ?? null, error ?? null, id);
 }
 
+export function deleteTaskRow(id: string, owner: string): boolean {
+  return db.prepare('DELETE FROM tasks WHERE id = ? AND owner = ?').run(id, owner).changes > 0;
+}
+
 /* ==================== 数据集（阅读数据）====================
  * 用户上传的 CSV 归一化后存两张表：datasets 元信息 + chapter_stats 明细。
  * 数据集是独立实体（有 id/name/owner），dataService 按 dataset 查数，

@@ -69,5 +69,10 @@ export const useTaskStore = defineStore('tasks', {
       await fetch(`/api/tasks/${id}/cancel`, { method: 'POST' });
       await this.refresh();
     },
+    async remove(id: string) {
+      await fetch(`/api/tasks/${id}`, { method: 'DELETE' });
+      if (this.selectedId === id) this.selectedId = '';
+      await this.refresh();
+    },
   },
 });

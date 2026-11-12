@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import {
-  createTaskRow, finishTaskRow, getTaskRow, listTaskRows, updateTaskSteps,
+  createTaskRow, finishTaskRow, getTaskRow, listTaskRows, updateTaskSteps, deleteTaskRow,
   type TaskRow, type TaskStep,
 } from '../db.js';
 import { runDataAnalysis } from './jobs/dataAnalysis.js';
@@ -127,6 +127,13 @@ export function cancelTask(id: string, owner: string): boolean {
   if (!task || task.status !== 'running') return false;
   controllers.get(id)?.abort();
   return true;
+}
+
+/** 删除任务记录：running 不可删（先取消），已结束的连报告产物一并清除 */
+export function deleteTask(id: string, owner: string): boolean {
+  const task = getTaskRow(id, owner);
+  if (!task || task.status === 'running') return false;
+  return deleteTaskRow(id, owner);
 }
 
 export { getTaskRow as getTask, listTaskRows as listTasks };

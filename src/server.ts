@@ -84,7 +84,8 @@ if (authEnabled()) {
     // 数据集上传/删除等管理操作 401
     const TASKS = '/api/tasks';
     const guestTasks = c.req.path === TASKS || c.req.path.startsWith(TASKS + '/')
-      ? c.req.method === 'GET' || (c.req.method === 'POST' && (c.req.path === TASKS || c.req.path.endsWith('/cancel')))
+      ? c.req.method === 'GET' || c.req.method === 'DELETE'
+        || (c.req.method === 'POST' && (c.req.path === TASKS || c.req.path.endsWith('/cancel')))
       : false;
     const guestAllowed = (
       ['/api/chat', '/api/sessions'].some((p) => c.req.path.startsWith(p))
@@ -476,7 +477,7 @@ app.patch('/api/novels/:id/owner', async (c: Context) => {
  * 与 /api/chat 的本质区别：受理即返回（202），过程/产物走轮询。
  * 任务按身份隔离（同会话的 owner 规则）。
  */
-import { cancelTask, getTask, listTasks, startTask } from './tasks/runner.js';
+import { cancelTask, deleteTask, getTask, listTasks, startTask } from './tasks/runner.js';
 import { seedBuiltinDatasets, seedShaosongDataset, listDatasets } from './datasets/store.js';
 import { autoMap, parseDataFile, normalize, FIELD_LABEL, FIELDS, type Mapping } from './datasets/parse.js';
 import { createDatasetRow, deleteDatasetRow, insertChapterStats, findDatasetByName, getDatasetRow, updateDatasetRowCount, countChapterStats, setDatasetOwner } from './db.js';
@@ -603,6 +604,14 @@ app.post('/api/tasks/:id/cancel', (c: Context) => {
   const ok = cancelTask(c.req.param('id') as string, owner);
   if (!ok) return c.json({ error: '任务不存在或已结束' }, 400);
   return c.json(getTask(c.req.param('id') as string, owner));
+});
+
+/** 删除任务记录（含报告产物）：仅限自己的已结束任务，游客可清自己的记录 */
+app.delete('/api/tasks/:id', (c: Context) => {
+  const owner = c.get('adminUser') || (c.get('visitorId') as string);
+  const ok = deleteTask(c.req.param('id') as string, owner);
+  if (!ok) return c.json({ error: '任务不存在或仍在运行中' }, 400);
+  return c.json({ ok: true });
 });
 
 // 静态托管前端构建产物（必须放在 API 路由之后）

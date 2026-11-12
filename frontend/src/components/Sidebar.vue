@@ -37,8 +37,14 @@ function taskPct(t: Task): number {
   return Math.round((done / Math.max(t.steps.length, 1)) * 100);
 }
 
-/** 按来源 tab 发起对应剧本：dataset→阅读数据分析；novel→小说文本分析 */
-async function createAnalysis() {
+function removeTask(t: Task) {
+  // 报告产物随记录一并删除，不可恢复，需二次确认
+  if (window.confirm(`删除「${t.title}」的记录？报告将一并清除。`)) {
+    taskStore.remove(t.id);
+  }
+}
+
+/** 按来源 tab 发起对应剧本：dataset→阅读数据分析；novel→小说文本分析 */async function createAnalysis() {
   if (taskStore.running) return;
   if (analysisStore.sourceTab === 'novel') {
     if (!analysisStore.selectedNovel) return;
@@ -218,6 +224,7 @@ onMounted(() => novelStore.resume());
           <span class="ops">
             <i class="rows">{{ TASK_STATUS[t.status] }}{{ t.status === 'running' ? ` ${taskPct(t)}%` : '' }}</i>
             <button v-if="t.status === 'running'" class="del" title="取消任务" @click.stop="taskStore.cancel(t.id)">✕</button>
+            <button v-else class="del" title="删除记录" @click.stop="removeTask(t)">✕</button>
           </span>
         </div>
         <div v-if="!taskStore.list.length" class="empty">暂无分析任务</div>
